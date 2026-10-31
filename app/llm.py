@@ -1,5 +1,7 @@
 """LLM access. One method: structured(system, user, schema) -> validated model."""
 
+import functools
+import logging
 import random
 import re
 import time
@@ -11,8 +13,11 @@ from pydantic import BaseModel, ValidationError
 from app import config
 
 T = TypeVar("T", bound=BaseModel)
+logger = logging.getLogger(__name__)
 
-RETRYABLE_STATUS = {429, 500, 503}
+# 504 = our per-call timeout: the SDK sends it to Gemini as a server deadline, so a slow
+# call usually comes back as 504 DEADLINE_EXCEEDED rather than a client-side httpx timeout.
+RETRYABLE_STATUS = {429, 500, 503, 504}
 MAX_RETRIES_PER_MODEL = 2  # then move to the next model in the fallback chain
 BASE_DELAY_S = 2.0
 MAX_DELAY_S = 60.0
@@ -44,7 +49,11 @@ class LLMResult:
 
 
 class LLM(Protocol):
-    def structured(self, system: str, user: str, schema: type[T]) -> LLMResult: ...
+    def structured(
+        self, system: str, user: str, schema: type[T], thinking: str | None = None
+    ) -> LLMResult:
+        """thinking: optional "minimal" | "low" | "medium" | "high"; None = model default."""
+        ...
 
 
 def _retry_hint_seconds(err) -> float | None:
@@ -65,6 +74,7 @@ class GeminiLLM:
         client=None,
         sleep: Callable[[float], None] = time.sleep,
         fallback_models: list[str] | None = None,
+        call_timeout_s: float = config.LLM_CALL_TIMEOUT_S,
     ):
         if client is None:
             from google import genai
@@ -81,46 +91,70 @@ class GeminiLLM:
         fallbacks = config.LLM_FALLBACK_MODELS if fallback_models is None else fallback_models
         self.models = [model] + [m for m in fallbacks if m != model]
         self.sleep = sleep
+        self.call_timeout_s = call_timeout_s
+        self.exhausted_until: dict[str, float] = {}  # model -> epoch seconds
 
-    def _generate(self, system: str, user: str, schema: type[T], failures: list[dict]):
-        """generate_content with backoff on 429/5xx, then fall through the model chain.
+    def _generate(
+        self, system: str, user: str, schema: type[T], failures: list[dict], thinking: str | None
+    ):
+        """generate_content with backoff on 429/5xx/timeout, then fall through the model chain.
         Appends each failed attempt to `failures`; returns (response, model, call_seconds)."""
+        import httpx
         from google.genai import errors, types
 
         cfg = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
             response_json_schema=schema.model_json_schema(),
+            http_options=types.HttpOptions(timeout=int(self.call_timeout_s * 1000)),
+            thinking_config=(
+                types.ThinkingConfig(thinking_level=thinking.upper()) if thinking else None
+            ),
         )
-        last_error: errors.APIError | None = None
+        last_error = "none"
         for model in self.models:
+            if self.exhausted_until.get(model, 0) > time.time():
+                failures.append({"model": model, "status": "skipped_exhausted", "call_s": 0.0})
+                continue
             for attempt in range(MAX_RETRIES_PER_MODEL + 1):
                 start = time.perf_counter()
+                hint = None
                 try:
                     resp = self.client.models.generate_content(model=model, contents=user, config=cfg)
-                    return resp, model, round(time.perf_counter() - start, 2)
+                    call_s = round(time.perf_counter() - start, 2)
+                    logger.info("%s %s ok in %.2fs (thinking=%s)", schema.__name__, model, call_s, thinking)
+                    return resp, model, call_s
                 except errors.APIError as e:
                     if e.code not in RETRYABLE_STATUS:
                         raise LLMError(f"Gemini API error {e.code} on {model}: {e.message}") from e
-                    failures.append({
-                        "model": model, "status": e.code,
-                        "call_s": round(time.perf_counter() - start, 2),
-                    })
-                    last_error = e
-                    if attempt < MAX_RETRIES_PER_MODEL:
-                        delay = _retry_hint_seconds(e) or min(MAX_DELAY_S, BASE_DELAY_S * 2**attempt)
-                        self.sleep(delay + random.uniform(0, 1))
-        raise LLMError(
-            f"All models failed ({', '.join(self.models)}). Last: {last_error.code} {last_error.message}"
-        )
+                    status, hint, last_error = e.code, _retry_hint_seconds(e), f"{e.code} {e.message}"
+                except httpx.TimeoutException:
+                    status, last_error = "timeout", f"timeout after {self.call_timeout_s}s"
+                failures.append({
+                    "model": model, "status": status,
+                    "call_s": round(time.perf_counter() - start, 2),
+                })
+                logger.warning("%s %s failed: %s after %.2fs",
+                               schema.__name__, model, status, failures[-1]["call_s"])
+                if hint and hint > MAX_DELAY_S:
+                    # e.g. daily free-tier quota gone (retryDelay ~20h): skip this model until then.
+                    self.exhausted_until[model] = time.time() + hint
+                    logger.warning("%s exhausted for %.0fs; moving to next model", model, hint)
+                    break
+                if attempt < MAX_RETRIES_PER_MODEL:
+                    delay = hint or min(MAX_DELAY_S, BASE_DELAY_S * 2**attempt)
+                    self.sleep(delay + random.uniform(0, 1))
+        raise LLMError(f"All models failed ({', '.join(self.models)}). Last: {last_error}")
 
-    def structured(self, system: str, user: str, schema: type[T]) -> LLMResult:
+    def structured(
+        self, system: str, user: str, schema: type[T], thinking: str | None = None
+    ) -> LLMResult:
         prompt = user
         last_error: Exception | None = None
         failures: list[dict] = []
         start = time.perf_counter()
         for validation_retry in range(2):  # one retry with the validation error fed back
-            resp, model, call_s = self._generate(system, prompt, schema, failures)
+            resp, model, call_s = self._generate(system, prompt, schema, failures, thinking)
             finish = resp.candidates[0].finish_reason if resp.candidates else None
             finish_name = getattr(finish, "name", str(finish))
             raw_text = resp.text or ""
@@ -153,7 +187,10 @@ class AnthropicLLM:
         self.model = model
         self.effort = effort
 
-    def structured(self, system: str, user: str, schema: type[T]) -> LLMResult:
+    def structured(
+        self, system: str, user: str, schema: type[T], thinking: str | None = None
+    ) -> LLMResult:
+        # `thinking` is ignored here: Opus 5.5 thinking is adaptive, depth set via LLM_EFFORT.
         prompt = user
         last_error: Exception | None = None
         for _ in range(2):  # one retry with the validation error fed back
@@ -189,7 +226,9 @@ class AnthropicLLM:
         raise LLMError(f"Validation failed after retry: {last_error}")
 
 
+@functools.cache
 def get_llm() -> LLM:
+    """One shared instance, so quota-exhaustion memory persists across requests."""
     if config.LLM_PROVIDER == "gemini":
         return GeminiLLM()
     if config.LLM_PROVIDER == "anthropic":

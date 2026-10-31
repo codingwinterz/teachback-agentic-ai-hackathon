@@ -1,6 +1,7 @@
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from google.genai import errors
 
@@ -30,6 +31,7 @@ class FakeLLM:
 
     def __init__(self):
         self.calls = []
+        self.thinking = {}
         self.outputs = {
             CleanResult: CleanResult(
                 claims=[
@@ -58,8 +60,9 @@ class FakeLLM:
             ),
         }
 
-    def structured(self, system, user, schema):
+    def structured(self, system, user, schema, thinking=None):
         self.calls.append((schema.__name__, user))
+        self.thinking[schema.__name__] = thinking
         out = self.outputs[schema]
         return LLMResult(parsed=out, raw_text=out.model_dump_json(), model="fake-model",
                          elapsed_s=0.5, last_call_s=0.5)
@@ -82,6 +85,7 @@ def test_core_loop_with_fake_llm(conn):
     result = run_attempt(conn, llm, "overfitting", MESSY)
 
     assert [c[0] for c in llm.calls] == ["CleanResult", "GradeResult", "Decision"]
+    assert llm.thinking == {"CleanResult": "low", "GradeResult": None, "Decision": "low"}
     # blended hedge = mean of LLM 0.6 and the code score
     code = hedging.code_hedging(MESSY).score
     assert result.hedging["blended"] == round((0.6 + code) / 2, 3)
@@ -125,11 +129,13 @@ class FakeGeminiClient:
         self.queue = list(queue)
         self.prompts = []
         self.called_models = []
+        self.configs = []
         self.models = self
 
     def generate_content(self, model, contents, config):
         self.prompts.append(contents)
         self.called_models.append(model)
+        self.configs.append(config)
         item = self.queue.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -170,6 +176,43 @@ def test_gemini_falls_back_to_next_model_when_primary_stays_overloaded():
     llm = GeminiLLM(model="primary", client=client, sleep=lambda s: None, fallback_models=["backup"])
     with pytest.raises(LLMError, match="All models failed"):
         llm.structured("sys", "user", Decision)
+
+
+def test_gemini_timeout_is_retryable_and_config_carries_timeout_and_thinking():
+    ok = Decision(action="advance", reason="Solid.").model_dump_json()
+    deadline = errors.ServerError(504, {"error": {"code": 504, "message": "Deadline expired"}})
+    client = FakeGeminiClient([httpx.ReadTimeout("slow"), deadline, _gemini_response(ok)])
+    llm = GeminiLLM(model="m", client=client, sleep=lambda s: None, fallback_models=[],
+                    call_timeout_s=12)
+
+    result = llm.structured("sys", "user", Decision, thinking="low")
+
+    assert result.parsed.action == "advance"
+    assert [f["status"] for f in result.failed_attempts] == ["timeout", 504]
+    cfg = client.configs[0]
+    assert cfg.http_options.timeout == 12000
+    assert cfg.thinking_config.thinking_level.value == "LOW"
+
+    client = FakeGeminiClient([_gemini_response(ok)])
+    GeminiLLM(model="m", client=client, sleep=lambda s: None).structured("s", "u", Decision)
+    assert client.configs[0].thinking_config is None  # grade path: model default
+
+
+def test_gemini_daily_quota_skips_model_without_sleeping():
+    daily = errors.ClientError(429, {"error": {"code": 429, "message": "quota",
+                                               "details": [{"retryDelay": "72629s"}]}})
+    ok = Decision(action="advance", reason="Solid.").model_dump_json()
+    client = FakeGeminiClient([daily, _gemini_response(ok), _gemini_response(ok)])
+    sleeps = []
+    llm = GeminiLLM(model="primary", client=client, sleep=sleeps.append, fallback_models=["backup"])
+
+    first = llm.structured("s", "u", Decision)
+    second = llm.structured("s", "u", Decision)
+
+    assert sleeps == []  # never waits out a 20h retryDelay
+    assert client.called_models == ["primary", "backup", "backup"]  # primary skipped on 2nd call
+    assert first.model == second.model == "backup"
+    assert second.failed_attempts == [{"model": "primary", "status": "skipped_exhausted", "call_s": 0.0}]
 
 
 def test_gemini_does_not_fall_back_on_client_errors():

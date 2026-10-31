@@ -36,7 +36,7 @@ class SingleShotDecider:
             prereqs=json.dumps([s.model_dump() for s in ctx.prerequisite_states]),
             next_ids=ctx.next_concept_ids,
         )
-        out = self.llm.structured(prompts.DECIDE_SYSTEM, user, Decision)
+        out = self.llm.structured(prompts.DECIDE_SYSTEM, user, Decision, thinking="low")
         _log_llm(log, "decide", "llm.decide", {"concept_id": ctx.concept.id}, out)
         return out.parsed
 
@@ -66,6 +66,7 @@ def run_attempt(
         prompts.CLEAN_SYSTEM,
         prompts.CLEAN_USER.format(concept_name=concept.name, transcript=transcript),
         CleanResult,
+        thinking="low",
     )
     clean: CleanResult = out.parsed
     _log_llm(log, "clean", "llm.clean", {"chars": len(transcript)}, out)

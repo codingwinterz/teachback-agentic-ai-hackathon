@@ -50,3 +50,13 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 **AI generated (I approved):** `model`/`elapsed_s` columns (+ startup migration), `step_timings`/`total_s` in the response, and per-LLM-call `elapsed_s` vs `last_call_s` plus failed attempts, so slow calls and retries can be told apart.
 
 **Observed (2 runs, gemini-3.6-flash):** run 1 = 21.3s (clean 8.2, grade 4.6, decide 8.6, no retries). Run 2 = 65.0s: clean 26.0s single call with no retries, decide 33.7s (two 503s, final call 15.8s). Fallback never fired.
+
+### Latency + quota fixes
+**I decided:** low thinking on clean and decide only (grade untouched); 12s per-call timeout that counts as retryable; target under ~15s per attempt, else consider merging clean + grade.
+
+**AI generated (I approved):**
+- `thinking_level=LOW` (Gemini 3.x uses levels, not budgets), `HttpOptions(timeout=12000)` per request.
+- Found while testing: the SDK sends the timeout as a server deadline, so slow calls return HTTP 504; made 504 retryable.
+- Found while testing: gemini-3.6-flash free tier = 20 requests/day; a daily-quota 429 says `retryDelay: 72629s` and the backoff slept on it (uncapped). Now a hint > 60s marks the model exhausted until then and falls through immediately; `get_llm()` is a shared instance so this persists across requests.
+
+**Observed (3 runs, all served by gemini-3.5-flash-lite after 3.6 quota ran out):** 3.57s / 3.79s / 3.97s total; mastery 0.344 / 0.306 / 0.389. Under the 15s target, so no clean+grade merge.
