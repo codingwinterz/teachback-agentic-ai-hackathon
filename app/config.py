@@ -24,4 +24,11 @@ LLM_EFFORT = os.getenv("LLM_EFFORT", "medium")  # anthropic only
 LLM_CALL_TIMEOUT_S = float(os.getenv("LLM_CALL_TIMEOUT_S", "12"))  # per request; timeout is retryable
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DB_PATH = os.getenv("DB_PATH", "teachback.db")
+
+# Study sessions (quota safety): max LLM requests per session, and pacing between them.
+SESSION_MAX_CALLS = int(os.getenv("SESSION_MAX_CALLS", "30"))
+SESSION_MAX_QUESTIONS = 5
+# Minimum seconds between LLM calls in a session: 4s keeps under 15 requests/minute (Flash-Lite
+# free tier). Applied only when LLM_MODE=real, so fake-mode development stays fast.
+SESSION_MIN_CALL_INTERVAL_S = float(os.getenv("SESSION_MIN_CALL_INTERVAL_S", "4"))
 CONCEPTS_PATH = os.getenv("CONCEPTS_PATH", "data/concepts.json")

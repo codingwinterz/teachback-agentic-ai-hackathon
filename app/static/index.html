@@ -21,9 +21,26 @@
 
   <main class="layout">
     <section class="work">
+      <section id="session" class="session" aria-live="polite">
+        <div class="session-bar">
+          <button id="start-session" type="button" class="quiet">Start study session</button>
+          <span id="session-status" class="muted small-inline"></span>
+          <button id="end-session" type="button" class="quiet" hidden>End session</button>
+        </div>
+        <div id="session-card" class="session-card" hidden>
+          <p id="session-progress" class="session-progress"></p>
+          <p id="session-question" class="session-question"></p>
+          <p id="session-why" class="session-why"></p>
+        </div>
+        <p id="session-message" class="session-message" hidden></p>
+      </section>
+
       <form id="attempt-form" class="dictation">
-        <label for="transcript" class="prompt">
+        <label for="transcript" class="prompt" id="prompt-default">
           Explain <strong id="concept-name">this concept</strong> out loud, as if teaching a friend.
+        </label>
+        <label for="transcript" class="prompt" id="prompt-session" hidden>
+          Dictate your answer to the question above.
         </label>
         <p id="prereqs" class="prereqs"></p>
         <textarea id="transcript" autofocus spellcheck="false"
@@ -38,7 +55,17 @@
       <section class="trace" aria-labelledby="trace-title">
         <h2 id="trace-title">What the tutor is doing</h2>
         <ol id="steps" class="steps" aria-live="polite"></ol>
+        <p id="trace-why" class="trace-why" hidden></p>
+        <details id="tool-calls" class="tool-calls" hidden>
+          <summary>Agent tool calls (<span id="tool-count">0</span>)</summary>
+          <ol id="tool-list"></ol>
+        </details>
         <p id="trace-error" class="error" role="alert" hidden></p>
+      </section>
+
+      <section id="session-log" class="session-log" hidden>
+        <h2>Session log</h2>
+        <ol id="session-steps"></ol>
       </section>
 
       <section id="result" class="result" aria-live="polite" hidden>

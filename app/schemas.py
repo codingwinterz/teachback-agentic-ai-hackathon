@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 EMPTY_STRINGS = {"", "null", "none", "n/a", "na", "undefined"}
 
@@ -70,6 +70,43 @@ class Decision(BaseModel):
         return v.strip() if isinstance(v, str) else v
 
 
+ToolName = Literal[
+    "get_learner_state", "list_due_reviews", "list_weak_concepts",
+    "pick_next_concept", "get_prerequisites", "generate_followup_question",
+]
+
+
+class ToolCall(BaseModel):
+    """One tool the session agent wants to run. Only the arguments that tool needs are set."""
+
+    tool: ToolName
+    concept_id: str | None = None
+    strategy: Literal["weakest", "due", "prerequisite_gap"] | None = None
+    misconception: str | None = None
+
+
+class FinalChoice(BaseModel):
+    """The session agent's decision: which concept to ask about next, and the question."""
+
+    action: Action
+    next_concept_id: str
+    question: str = Field(description="The question to ask the student next.")
+    why: str = Field(description='One sentence: "Why this next?", addressed to the student.')
+
+
+class AgentStep(BaseModel):
+    """One round of the session tool loop: request tools OR give the final choice."""
+
+    calls: list[ToolCall] = Field(default_factory=list, max_length=3)
+    final: FinalChoice | None = None
+
+    @model_validator(mode="after")
+    def _calls_or_final(self):
+        if not self.calls and self.final is None:
+            raise ValueError("an agent step must request at least one tool or give a final choice")
+        return self
+
+
 class Lesson(BaseModel):
     """Step 5 (teach): a mini-lesson that corrects one misconception, plus a check question."""
 
@@ -133,6 +170,34 @@ class DecisionContext(BaseModel):
 class AttemptRequest(BaseModel):
     concept_id: str
     transcript: str = Field(min_length=1)
+
+
+class SessionAnswerRequest(BaseModel):
+    transcript: str = Field(min_length=1)
+
+
+class SessionStepView(BaseModel):
+    step_no: int
+    concept_id: str
+    concept_name: str
+    question: str
+    action: str
+    reason: str
+    attempt_id: int | None = None
+    mastery_after: float | None = None
+
+
+class SessionView(BaseModel):
+    id: int
+    status: str  # active | finished | stopped
+    started_at: str
+    ended_at: str | None = None
+    call_count: int
+    max_calls: int
+    max_questions: int
+    message: str | None = None
+    steps: list[SessionStepView]
+    current: SessionStepView | None = None  # the open question, if any
 
 
 class LessonAnswerRequest(BaseModel):

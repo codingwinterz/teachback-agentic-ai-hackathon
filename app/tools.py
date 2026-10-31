@@ -32,7 +32,8 @@ class AgentLogger:
         if model:
             self.step_models[step] = model
         self.on_event({"type": "tool", "step": step, "tool_name": tool_name,
-                       "model": model, "elapsed_s": elapsed_s})
+                       "model": model, "elapsed_s": elapsed_s,
+                       "args": args, "result": _summary(result)})
 
     def step_start(self, step: str) -> None:
         self.on_event({"type": "step_start", "step": step})
@@ -62,6 +63,14 @@ class AgentLogger:
             {**dict(r), "args": json.loads(r["args_json"]), "result": json.loads(r["result_json"])}
             for r in rows
         ]
+
+
+def _summary(result, limit: int = 240) -> str:
+    """Short text version of a tool result for the live trace (full JSON stays in agent_log)."""
+    if isinstance(result, dict) and "output" in result:  # llm.* entries: show the parsed output
+        result = result["output"]
+    text = json.dumps(result, default=str)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _since(start: float) -> float:

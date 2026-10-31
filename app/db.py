@@ -56,6 +56,29 @@ CREATE TABLE IF NOT EXISTS lessons (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Study sessions: the agent picks concepts with tools, up to 5 questions per session.
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    call_count INTEGER NOT NULL DEFAULT 0,
+    message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS session_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    step_no INTEGER NOT NULL,
+    concept_id TEXT NOT NULL REFERENCES concepts(id),
+    question TEXT NOT NULL,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    attempt_id INTEGER REFERENCES attempts(id),
+    mastery_after REAL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- run_id, model, elapsed_s are additions to the CLAUDE.md schema.
 CREATE TABLE IF NOT EXISTS agent_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

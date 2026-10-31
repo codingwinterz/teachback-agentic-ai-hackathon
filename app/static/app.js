@@ -7,6 +7,7 @@ const STEPS = [
   { id: "decide", label: "Decide", tools: "pick the next action" },
   { id: "teach", label: "Teach", tools: "mini-lesson if needed" },
 ];
+const START_STEPS = [{ id: "choose", label: "Choose", tools: "agent picks a concept with tools" }];
 
 const ACTIONS = {
   re_explain: "Explain it again",
@@ -121,21 +122,26 @@ async function refreshState() {
 
 // ---------- live trace ----------
 
-function resetTrace() {
-  $("trace-error").hidden = true;
-  $("steps").replaceChildren(
-    ...STEPS.map((s) =>
-      el("li", { class: "step", id: `step-${s.id}` },
-        el("div", { class: "step-head" }, s.label),
-        el("div", { class: "step-meta" }),
-        el("div", { class: "step-tools" }, s.tools)
-      )
-    )
+function stepRow(s) {
+  return el("li", { class: "step", id: `step-${s.id}` },
+    el("div", { class: "step-head" }, s.label),
+    el("div", { class: "step-meta" }),
+    el("div", { class: "step-tools" }, s.tools)
   );
 }
 
+function resetTrace(steps = STEPS) {
+  $("trace-error").hidden = true;
+  $("trace-why").hidden = true;
+  $("tool-calls").hidden = true;
+  $("tool-list").replaceChildren();
+  $("tool-count").textContent = "0";
+  $("steps").replaceChildren(...steps.map(stepRow));
+}
+
 function onStepStart(step) {
-  $(`step-${step}`)?.classList.add("running");
+  if (!$(`step-${step}`)) $("steps").append(stepRow({ id: step, label: step, tools: "" }));
+  $(`step-${step}`).classList.add("running");
 }
 
 function onStepDone({ step, model, elapsed_s }) {
@@ -153,13 +159,29 @@ function onStepSkipped(step) {
   row.querySelector(".step-meta").textContent = "not needed";
 }
 
-function onTool({ step, tool_name }) {
+// "tool.pick_next_concept" + {strategy: "due"} -> "pick_next_concept(strategy=due)"
+function toolLabel(toolName, args) {
+  const name = toolName.replace(/^tool\./, "");
+  const parts = Object.entries(args || {}).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
+  return `${name}(${parts.join(", ")})`;
+}
+
+function onTool({ step, tool_name, args, result, elapsed_s, model }) {
   const row = $(`step-${step}`);
-  if (!row) return;
-  const tools = row.querySelector(".step-tools");
-  if (!row.dataset.calls) tools.textContent = "";
-  row.dataset.calls = `${row.dataset.calls || ""}${tool_name} `;
-  tools.textContent = row.dataset.calls.trim().split(" ").join(", ");
+  if (row) {
+    const tools = row.querySelector(".step-tools");
+    if (!row.dataset.calls) tools.textContent = "";
+    row.dataset.calls = `${row.dataset.calls || ""}${tool_name.replace(/^tool\./, "")} `;
+    tools.textContent = row.dataset.calls.trim().split(" ").join(", ");
+  }
+  const secs = elapsed_s == null ? "" : ` ${Number(elapsed_s).toFixed(2)}s`;
+  $("tool-list").append(el("li", {},
+    el("code", {}, toolLabel(tool_name, args)),
+    `${model ? ` [${model}]` : ""}${secs} `,
+    el("span", { class: "res" }, `→ ${result ?? ""}`)
+  ));
+  $("tool-count").textContent = String($("tool-list").children.length);
+  $("tool-calls").hidden = false;
 }
 
 function showError(message) {
@@ -279,6 +301,32 @@ async function submitCheck(event) {
 
 let busy = false; // one attempt at a time: a repeated Ctrl+Enter must not spend a second LLM run
 
+let activeSession = null; // SessionView while a study session is running
+
+// POST json and feed each server-sent event to handleEvent.
+async function streamPost(url, body) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!resp.ok) throw new Error(`The server returned ${resp.status}. Check the uvicorn log.`);
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const chunk = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      if (chunk.startsWith("data: ")) await handleEvent(JSON.parse(chunk.slice(6)));
+    }
+  }
+}
+
 async function submitAttempt(event) {
   event?.preventDefault();
   if (busy) return;
@@ -295,34 +343,88 @@ async function submitAttempt(event) {
   $("lesson").hidden = true;
 
   try {
-    const resp = await fetch("/attempt/stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ concept_id: $("concept").value, transcript }),
-    });
-    if (!resp.ok) throw new Error(`The server returned ${resp.status}. Check the uvicorn log.`);
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let cut;
-      while ((cut = buffer.indexOf("\n\n")) >= 0) {
-        const chunk = buffer.slice(0, cut);
-        buffer = buffer.slice(cut + 2);
-        if (chunk.startsWith("data: ")) await handleEvent(JSON.parse(chunk.slice(6)));
-      }
+    if (activeSession) {
+      await streamPost(`/session/${activeSession.id}/answer`, { transcript });
+    } else {
+      await streamPost("/attempt/stream", { concept_id: $("concept").value, transcript });
     }
   } catch (err) {
     showError(`Couldn't reach the tutor: ${err.message}`);
   } finally {
     busy = false;
     button.disabled = false;
-    button.textContent = "Check my explanation";
+    button.textContent = activeSession ? "Send answer" : "Check my explanation";
   }
+}
+
+async function startSession() {
+  if (busy) return;
+  busy = true;
+  $("start-session").disabled = true;
+  $("session-message").hidden = true;
+  resetTrace(START_STEPS);
+  try {
+    await streamPost("/session/start");
+  } catch (err) {
+    showError(`Couldn't start a session: ${err.message}`);
+  } finally {
+    busy = false;
+    $("start-session").disabled = false;
+  }
+}
+
+async function endSession() {
+  if (!activeSession || busy) return;
+  busy = true;
+  try {
+    const resp = await fetch(`/session/${activeSession.id}/end`, { method: "POST" });
+    renderSession(await resp.json());
+  } catch (err) {
+    showError(`Couldn't end the session: ${err.message}`);
+  } finally {
+    busy = false;
+  }
+}
+
+const ACTION_SHORT = {
+  re_explain: "re-explain", ask_followup: "follow-up", revisit_prerequisite: "walk back to a prerequisite",
+  advance: "move on", review_due: "review",
+};
+
+function renderSession(view) {
+  const active = view.status === "active" && view.current;
+  activeSession = active ? view : null;
+  $("start-session").hidden = Boolean(active);
+  $("end-session").hidden = !active;
+  $("concept").disabled = Boolean(active);
+  $("session-status").textContent = `AI requests used: ${view.call_count} of ${view.max_calls}`;
+  $("session-card").hidden = !active;
+  $("prompt-default").hidden = Boolean(active);
+  $("prompt-session").hidden = !active;
+  $("submit").textContent = active ? "Send answer" : "Check my explanation";
+
+  if (active) {
+    const c = view.current;
+    $("session-progress").textContent = `Question ${c.step_no} of ${view.max_questions}: ${c.concept_name}`;
+    $("session-question").textContent = c.question;
+    $("session-why").textContent = c.reason;
+    $("trace-why").textContent = c.reason;
+    $("trace-why").hidden = false;
+    selectConcept(c.concept_id);
+    $("transcript").value = "";
+    updateWordCount();
+  }
+  $("session-message").textContent = view.message ?? "";
+  $("session-message").hidden = !view.message || Boolean(active);
+
+  $("session-log").hidden = view.steps.length === 0;
+  $("session-steps").replaceChildren(...view.steps.map((s) =>
+    el("li", {},
+      `${s.concept_name} · ${ACTION_SHORT[s.action] ?? s.action}`,
+      s.mastery_after == null ? " · waiting for your answer" : ` · mastery after ${Math.round(s.mastery_after * 100)}%`,
+      el("span", { class: "why" }, `Why: ${s.reason}`)
+    )
+  ));
 }
 
 async function handleEvent(e) {
@@ -336,6 +438,9 @@ async function handleEvent(e) {
     await refreshState();
     renderResult(e.data);
     renderLesson(e.data);
+  } else if (e.type === "session") {
+    await refreshState();
+    renderSession(e.data);
   }
 }
 
@@ -351,6 +456,8 @@ async function boot() {
   resetTrace();
   $("attempt-form").addEventListener("submit", submitAttempt);
   $("check-form").addEventListener("submit", submitCheck);
+  $("start-session").addEventListener("click", startSession);
+  $("end-session").addEventListener("click", endSession);
   $("transcript").addEventListener("input", updateWordCount);
   $("transcript").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.repeat) submitAttempt(e);

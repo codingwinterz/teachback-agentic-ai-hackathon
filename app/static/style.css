@@ -175,6 +175,39 @@ button.quiet { background: transparent; color: var(--ink); border: 1px solid var
 .count { font-size: 0.8rem; font-weight: 700; color: var(--alert); margin-left: 0.3rem; white-space: nowrap; }
 .empty { color: var(--pencil); font-style: italic; }
 
+/* ---------- study session ---------- */
+.session { margin-bottom: 1.5rem; }
+.session-bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.small-inline { font-size: 0.875rem; }
+#end-session { margin-left: auto; }
+.session-card {
+  margin-top: 0.9rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 6px solid var(--ink);
+  border-radius: 4px;
+}
+.session-progress { margin: 0; color: var(--pencil); font-size: 0.9rem; }
+.session-question { margin: 0.3rem 0; font-family: var(--read); font-size: 1.25rem; line-height: 1.4; max-width: 68ch; }
+.session-why { margin: 0; font-size: 0.92rem; max-width: 68ch; }
+.session-why::before { content: "Why this next? "; font-weight: 700; }
+.session-message { margin: 0.75rem 0 0; font-weight: 700; }
+
+.trace-why { margin: 0.75rem 0 0; font-size: 0.92rem; }
+.trace-why::before { content: "Why this next? "; font-weight: 700; }
+.tool-calls { margin-top: 0.75rem; font-size: 0.82rem; }
+.tool-calls summary { cursor: pointer; color: var(--pencil); }
+.tool-calls ol { margin-top: 0.4rem; padding-left: 1.4rem; list-style: decimal; }
+.tool-calls li { margin-bottom: 0.3rem; overflow-wrap: anywhere; }
+.tool-calls code { font-size: 0.8rem; }
+.tool-calls .res { color: var(--pencil); }
+
+.session-log { margin-top: 2rem; }
+.session-log ol { padding-left: 1.4rem; list-style: decimal; }
+.session-log li { padding: 0.35rem 0; border-bottom: 1px dotted var(--rule); max-width: 70ch; }
+.session-log .why { display: block; color: var(--pencil); font-size: 0.88rem; }
+
 /* ---------- lesson card ---------- */
 .lesson {
   margin-top: 2rem;

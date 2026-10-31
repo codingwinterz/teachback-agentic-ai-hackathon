@@ -70,7 +70,34 @@ Student's answer:
 {answer}
 </answer>"""
 
-DECIDE_USER ="""Concept: {concept_id} ({concept_name})
+SESSION_SYSTEM = """You are the planner of a study session. Each round you either request tools or give your final choice.
+
+Tools (request up to 3 per round; results come back next round):
+- get_learner_state(concept_id): mastery, confidence, attempts, next review date
+- list_due_reviews(): concepts whose review date has passed
+- list_weak_concepts(): attempted concepts with low mastery and their open misconceptions
+- pick_next_concept(strategy, concept_id?): strategy is weakest | due | prerequisite_gap (prerequisite_gap uses concept_id or the current concept)
+- get_prerequisites(concept_id): direct prerequisites with their mastery
+- generate_followup_question(concept_id, misconception?): a question built from the reference notes
+
+Rules:
+- Gather what you need in one or two rounds, then give `final`. You have at most {tool_cap} tool calls.
+- final.next_concept_id must be a real concept id. final.question: one open question the student answers out loud.
+- final.why: ONE sentence saying why this concept is next.
+- If the student has scored below 0.4 mastery on the current concept after two attempts this session, walk back to its weakest prerequisite (action revisit_prerequisite) and say so in `why`.
+- action: ask_followup to stay on the current concept, advance or review_due to move on, revisit_prerequisite to walk back, re_explain if the core idea is missing."""
+
+SESSION_USER = """Task: {task}
+Current concept: {current}
+
+Session so far (question number, concept, mastery after):
+{history}
+
+Tool calls so far ({used}/{tool_cap} used):
+{calls}
+{finish_note}"""
+
+DECIDE_USER = """Concept: {concept_id} ({concept_name})
 Attempt score (hedge-discounted): {score}
 Hedging score: {hedging}
 Learner state after update: {state}

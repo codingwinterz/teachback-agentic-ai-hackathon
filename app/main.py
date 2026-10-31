@@ -3,15 +3,19 @@ import queue
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Callable
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import config, db
+from app import config, db, session
 from app.agent import AlreadyAnswered, answer_lesson, run_attempt
 from app.llm import LLMError, get_llm
-from app.schemas import AttemptRequest, AttemptResult, LessonAnswerRequest, LessonAnswerResult
+from app.schemas import (
+    AttemptRequest, AttemptResult, LessonAnswerRequest, LessonAnswerResult, SessionAnswerRequest, SessionView,
+)
+from app.session import SessionClosed
 
 conn = db.connect()
 attempt_lock = threading.Lock()  # one attempt at a time on the shared SQLite connection
@@ -38,19 +42,19 @@ def post_attempt(req: AttemptRequest):
         raise HTTPException(502, str(e))
 
 
-@app.post("/attempt/stream")
-def post_attempt_stream(req: AttemptRequest):
-    """Server-sent events: step_start / tool / step_done as the loop runs, then result or error."""
+def _sse(job: Callable[[Callable[[dict], None]], None]) -> StreamingResponse:
+    """Run job(emit) in a thread under the attempt lock and stream its events as server-sent events.
+    Errors become {"type": "error", "status", "detail"} events instead of a silent hang."""
     events: queue.Queue = queue.Queue()
 
     def work():
         try:
             with attempt_lock:
-                result = run_attempt(conn, get_llm(), req.concept_id, req.transcript,
-                                     on_event=events.put)
-            events.put({"type": "result", "data": result.model_dump()})
+                job(events.put)
         except KeyError as e:
             events.put({"type": "error", "status": 404, "detail": str(e)})
+        except SessionClosed as e:
+            events.put({"type": "error", "status": 409, "detail": str(e)})
         except LLMError as e:
             events.put({"type": "error", "status": 502, "detail": str(e)})
         except Exception as e:  # surface anything else to the UI instead of a silent hang
@@ -65,6 +69,64 @@ def post_attempt_stream(req: AttemptRequest):
             yield f"data: {json.dumps(event, default=str)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/attempt/stream")
+def post_attempt_stream(req: AttemptRequest):
+    """Server-sent events: step_start / tool / step_done as the loop runs, then result or error."""
+    def job(emit):
+        result = run_attempt(conn, get_llm(), req.concept_id, req.transcript, on_event=emit)
+        emit({"type": "result", "data": result.model_dump()})
+
+    return _sse(job)
+
+
+def _session_budget() -> dict:
+    """Pacing only applies to real calls, so fake-mode development stays fast."""
+    return {"max_calls": config.SESSION_MAX_CALLS,
+            "min_interval_s": config.SESSION_MIN_CALL_INTERVAL_S if config.LLM_MODE == "real" else 0.0}
+
+
+@app.post("/session/start")
+def post_session_start():
+    """Server-sent events for the agent's tool loop, then {"type": "session", "data": SessionView}."""
+    def job(emit):
+        view = session.start_session(conn, get_llm(), on_event=emit, **_session_budget())
+        emit({"type": "session", "data": view.model_dump()})
+
+    return _sse(job)
+
+
+@app.post("/session/{session_id}/answer")
+def post_session_answer(session_id: int, req: SessionAnswerRequest):
+    """Runs the five-step pipeline on the answer (tool-loop decide), then the next question."""
+    def job(emit):
+        result, view = session.answer_session(conn, get_llm(), session_id, req.transcript,
+                                              on_event=emit, **_session_budget())
+        if result is not None:
+            emit({"type": "result", "data": result.model_dump()})
+        emit({"type": "session", "data": view.model_dump()})
+
+    return _sse(job)
+
+
+@app.post("/session/{session_id}/end", response_model=SessionView)
+def post_session_end(session_id: int):
+    with attempt_lock:
+        try:
+            session.session_view(conn, session_id)
+        except KeyError as e:
+            raise HTTPException(404, str(e))
+        session.end_session(conn, session_id, "finished", "Session ended.")
+        return session.session_view(conn, session_id, config.SESSION_MAX_CALLS)
+
+
+@app.get("/session/{session_id}", response_model=SessionView)
+def get_session(session_id: int):
+    try:
+        return session.session_view(conn, session_id, config.SESSION_MAX_CALLS)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.post("/lessons/{lesson_id}/answer", response_model=LessonAnswerResult)

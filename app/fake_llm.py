@@ -12,7 +12,10 @@ from pydantic import BaseModel
 
 from app import hedging
 from app.llm import LLMResult
-from app.schemas import CheckResult, CleanResult, Decision, GradeResult, Lesson, Misconception
+from app.schemas import (
+    AgentStep, CheckResult, CleanResult, Decision, FinalChoice, GradeResult, Lesson, Misconception,
+    ToolCall,
+)
 
 ABSOLUTES = re.compile(r"\b(always|never|only|guarantee[sd]?|every time|completely)\b", re.I)
 REVERSAL = re.compile(r"\b(no,? wait|wait,? no|actually,? no|i mean|scratch that|or rather)\b[,\s]*", re.I)
@@ -138,6 +141,59 @@ def _check(user: str) -> CheckResult:
     return CheckResult(correct=correct, feedback=feedback)
 
 
+CALL_LINE = re.compile(r"^CALL \d+: (\w+)\((\{.*?\})\) -> (.*)$", re.M)
+
+
+def _agent_step(user: str) -> AgentStep:
+    """Session planner: round 1 gathers with tools, round 2 gives the final choice."""
+    task = _between(user, "Task:", "\n")
+    current = _between(user, "Current concept:", "\n")
+    current = None if current in ("", "(none)") else current
+    calls = {m[1]: json.loads(m[3]) for m in CALL_LINE.finditer(user)}  # tool -> latest result
+    starting = task.startswith("Start")
+    misconceptions = json.loads((re.search(r"Misconceptions: (\[.*?\])\.", task) or [None, "[]"])[1])
+    mastery = float((re.search(r"mastery now (\d+(?:\.\d+)?)", task) or [None, "0"])[1])
+    attempts = int((re.search(r"this session: (\d+)", task) or [None, "0"])[1])
+    struggling = attempts >= 2 and mastery < 0.4
+
+    if not calls:  # round 1: choose tools
+        if starting:
+            plan = [ToolCall(tool="list_due_reviews"), ToolCall(tool="list_weak_concepts"),
+                    ToolCall(tool="pick_next_concept", strategy="due")]
+        elif struggling:
+            plan = [ToolCall(tool="get_prerequisites", concept_id=current),
+                    ToolCall(tool="get_learner_state", concept_id=current),
+                    ToolCall(tool="pick_next_concept", strategy="prerequisite_gap", concept_id=current)]
+        elif misconceptions:
+            plan = [ToolCall(tool="get_learner_state", concept_id=current),
+                    ToolCall(tool="generate_followup_question", concept_id=current,
+                             misconception=misconceptions[0])]
+        else:
+            plan = [ToolCall(tool="get_learner_state", concept_id=current),
+                    ToolCall(tool="list_weak_concepts"),
+                    ToolCall(tool="pick_next_concept", strategy="weakest")]
+        return AgentStep(calls=plan)
+
+    # round 2: final choice from the tool results
+    if "generate_followup_question" in calls and "pick_next_concept" not in calls:
+        q = calls["generate_followup_question"]
+        return AgentStep(final=FinalChoice(
+            action="ask_followup", next_concept_id=q["concept_id"], question=q["question"],
+            why=f"You still have a misconception about this concept, so one more question on it."))
+    pick = calls["pick_next_concept"]
+    action = ("revisit_prerequisite" if pick["strategy_used"] == "prerequisite_gap"
+              else "review_due" if pick["strategy_used"] == "due" else "advance")
+    why = pick["why"]
+    if action == "revisit_prerequisite":
+        name = calls.get("get_learner_state", {}).get("name", current)
+        why = (f"You've scored below 40% on {name} twice this session, so let's strengthen its "
+               f"prerequisite {pick['name']} first.")
+    return AgentStep(final=FinalChoice(
+        action=action, next_concept_id=pick["concept_id"],
+        question=f"Explain {pick['name']} out loud as if teaching a friend: what it is and why it matters.",
+        why=why))
+
+
 class FakeLLM:
     model = "fake-dev"
 
@@ -146,7 +202,7 @@ class FakeLLM:
 
     def structured(self, system: str, user: str, schema: type[BaseModel], thinking: str | None = None) -> LLMResult:
         handlers = {CleanResult: _clean, GradeResult: _grade, Decision: _decide,
-                    Lesson: _teach, CheckResult: _check}
+                    Lesson: _teach, CheckResult: _check, AgentStep: _agent_step}
         if schema not in handlers:
             raise ValueError(f"FakeLLM has no handler for {schema.__name__}")
         start = time.perf_counter()
