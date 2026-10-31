@@ -128,7 +128,7 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - Tool loop via `llm.structured(AgentStep)`: each round asks for up to 3 tools *or* gives `final`, so a decision costs ~2 requests instead of one per tool. Tools are DB reads; `generate_followup_question` is built from the reference notes in code (no LLM call). The 5th answer uses SingleShotDecider (no next concept to choose).
 - Walk-back enforced in code after the loop (`policy.walk_back` in agent_log) even if the model ignores the rule.
 - `BudgetedLLM` counts provider retries/fallback requests too, and a lesson check answered during a session counts against that session. Budget or quota errors end the session with a message and a rule-based plan (no further calls).
-- Pacing (`SESSION_MIN_CALL_INTERVAL_S`, default 4s) applies only when LLM_MODE=real, so fake-mode development stays fast.
+- Pacing (`SESSION_MIN_CALL_INTERVAL_S`) applies only when LLM_MODE=real, so fake-mode development stays fast. I changed the default from 4s to 5s (max 12 requests/minute, headroom under 15).
 - Sample mastery is replayed from sample attempts through the real scoring functions (dashboard and history agree); loading refuses to mix with real practice data.
 - Spaced repetition: attempt score >= 0.6 is a good recall (interval *= ease, ease +0.05); otherwise interval = 1 day (ease -0.2); ease bounded 1.3-2.8.
 - History's "mastery after" is a replay of attempts; lesson-check bonuses are not attempts, so they are not included.
@@ -137,5 +137,5 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 
 **New tables:** `sessions` (id, started_at, ended_at, status, call_count, message, plan_json), `session_steps` (id, session_id, step_no, concept_id, question, action, reason, attempt_id, mastery_after, created_at).
 **New columns (startup migrations, default 0/NULL):** `is_sample` on learner_state, misconceptions, attempts; `plan_json` on sessions.
-**New env vars:** `SESSION_MAX_CALLS` (30), `SESSION_MIN_CALL_INTERVAL_S` (4).
+**New env vars:** `SESSION_MAX_CALLS` (30), `SESSION_MIN_CALL_INTERVAL_S` (5).
 **Measured in fake mode (1 fake call = 1 real request):** a full 5-question session uses 22 requests with all strong answers and 27 with all weak answers (each weak answer adds a lesson); +1 per lesson check answered.

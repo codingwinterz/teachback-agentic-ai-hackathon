@@ -28,7 +28,7 @@ DB_PATH = os.getenv("DB_PATH", "teachback.db")
 # Study sessions (quota safety): max LLM requests per session, and pacing between them.
 SESSION_MAX_CALLS = int(os.getenv("SESSION_MAX_CALLS", "30"))
 SESSION_MAX_QUESTIONS = 5
-# Minimum seconds between LLM calls in a session: 4s keeps under 15 requests/minute (Flash-Lite
-# free tier). Applied only when LLM_MODE=real, so fake-mode development stays fast.
-SESSION_MIN_CALL_INTERVAL_S = float(os.getenv("SESSION_MIN_CALL_INTERVAL_S", "4"))
+# Minimum seconds between LLM calls in a session: 5s caps it at 12 requests/minute, under the
+# Flash-Lite free tier's 15 with headroom. Applied only when LLM_MODE=real, so fake mode stays fast.
+SESSION_MIN_CALL_INTERVAL_S = float(os.getenv("SESSION_MIN_CALL_INTERVAL_S", "5"))
 CONCEPTS_PATH = os.getenv("CONCEPTS_PATH", "data/concepts.json")

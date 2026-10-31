@@ -200,6 +200,16 @@ def test_budget_counts_provider_retries_and_paces_calls(conn):
     assert budget.used() == 4  # 2 calls + 1 real retry each (skipped models don't count)
 
 
+def test_real_mode_paces_sessions_at_the_configured_interval(monkeypatch):
+    from app import main
+
+    monkeypatch.setattr(config, "SESSION_MIN_CALL_INTERVAL_S", 5.0)
+    monkeypatch.setattr(config, "LLM_MODE", "real")
+    assert main._session_budget()["min_interval_s"] == 5.0
+    monkeypatch.setattr(config, "LLM_MODE", "fake")
+    assert main._session_budget()["min_interval_s"] == 0.0
+
+
 def test_lesson_check_during_a_session_counts_against_its_budget(conn):
     from app.agent import answer_lesson
 
