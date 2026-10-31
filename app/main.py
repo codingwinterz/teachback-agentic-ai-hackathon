@@ -112,13 +112,12 @@ def post_session_answer(session_id: int, req: SessionAnswerRequest):
 
 @app.post("/session/{session_id}/end", response_model=SessionView)
 def post_session_end(session_id: int):
+    """End early; generates the study plan (one LLM call, or rule-based if nothing was answered)."""
     with attempt_lock:
         try:
-            session.session_view(conn, session_id)
+            return session.end_by_user(conn, get_llm(), session_id, **_session_budget())
         except KeyError as e:
             raise HTTPException(404, str(e))
-        session.end_session(conn, session_id, "finished", "Session ended.")
-        return session.session_view(conn, session_id, config.SESSION_MAX_CALLS)
 
 
 @app.get("/session/{session_id}", response_model=SessionView)

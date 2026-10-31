@@ -97,6 +97,22 @@ Tool calls so far ({used}/{tool_cap} used):
 {calls}
 {finish_note}"""
 
+PLAN_SYSTEM = """You write a short study plan at the end of a tutoring session.
+- 3 to 5 steps, most important first. Each step names one concept (use its id and name from the input).
+- what_to_do: one short instruction. If the concept has a misconception, the step must say how to fix it,
+  and put the misconception text in `misconception`.
+- next_review: a date YYYY-MM-DD. Use the concept's next review date if given; otherwise tomorrow for weak concepts.
+- Prefer concepts practised in the session; use the other concepts only to reach 3 steps.
+- summary: one or two encouraging sentences."""
+
+PLAN_USER = """Today: {today}
+
+Session results (one line per concept practised):
+{rows}
+
+Other concepts to consider (weakest first):
+{extra}"""
+
 DECIDE_USER = """Concept: {concept_id} ({concept_name})
 Attempt score (hedge-discounted): {score}
 Hedging score: {hedging}

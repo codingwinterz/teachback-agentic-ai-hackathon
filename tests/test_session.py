@@ -200,6 +200,61 @@ def test_budget_counts_provider_retries_and_paces_calls(conn):
     assert budget.used() == 4  # 2 calls + 1 real retry each (skipped models don't count)
 
 
+# ---------------------------------------------------------------- study plan
+
+
+def test_full_session_ends_with_a_saved_study_plan(conn):
+    _knows_roots(conn)
+    events = []
+    view = session.start_session(conn, FakeLLM())
+    while view.status == "active":
+        _, view = session.answer_session(conn, FakeLLM(), view.id, WEAK_ANSWER, on_event=events.append)
+    plan = view.plan
+    assert plan and plan.source == "model" and 3 <= len(plan.steps) <= 5
+    practised = {st.concept_id for st in view.steps}
+    assert plan.steps[0].concept_id in practised
+    assert all(len(s.next_review) == 10 for s in plan.steps)  # YYYY-MM-DD
+    assert any(s.misconception for s in plan.steps)  # weak answers left a misconception to fix
+    assert conn.execute("SELECT plan_json FROM sessions WHERE id = ?", (view.id,)).fetchone()[0]
+    assert ("step_start", "plan") in [(e["type"], e.get("step")) for e in events]
+    assert "llm.plan" in _tool_names(conn, "llm.plan")
+    assert view.call_count <= config.SESSION_MAX_CALLS
+
+
+def test_stopped_session_gets_an_offline_plan_without_more_calls(conn):
+    _knows_roots(conn)
+    view = session.start_session(conn, FakeLLM(), max_calls=8)
+    session.answer_session(conn, FakeLLM(), view.id, WEAK_ANSWER, max_calls=8)
+    _, view = session.answer_session(conn, FakeLLM(), view.id, WEAK_ANSWER, max_calls=8)
+    assert view.status == "stopped" and view.plan.source == "offline" and view.call_count == 8
+    assert 3 <= len(view.plan.steps) <= 5
+
+
+def test_end_early_plans_offline_with_no_answers_and_with_the_model_otherwise(conn):
+    view = session.start_session(conn, FakeLLM())
+    before = view.call_count
+    view = session.end_by_user(conn, FakeLLM(), view.id)
+    assert view.status == "finished" and view.plan.source == "offline" and view.call_count == before
+
+    _knows_roots(conn)
+    view = session.start_session(conn, FakeLLM())
+    _, view = session.answer_session(conn, FakeLLM(), view.id, WEAK_ANSWER)
+    before = view.call_count
+    view = session.end_by_user(conn, FakeLLM(), view.id)
+    assert view.plan.source == "model" and view.call_count == before + 1
+
+
+def test_plan_from_rows_pads_to_three_and_dates_reviews():
+    rows = [{"concept_id": "overfitting", "name": "Overfitting", "mastery": 0.3,
+             "misconceptions": ["thinks more data always fixes overfitting"], "next_review": None}]
+    extra = [{"concept_id": c, "name": c.title(), "mastery": m, "misconceptions": [], "next_review": r}
+             for c, m, r in [("bias_variance", 0.2, "2026-11-05"), ("k_means", 0.8, None), ("boosting", 0.0, None)]]
+    plan = session.plan_from_rows(rows, extra, "2026-10-31")
+    assert [s.concept_id for s in plan.steps] == ["overfitting", "bias_variance", "k_means"]
+    assert plan.steps[0].misconception and "fix" in plan.steps[0].what_to_do
+    assert [s.next_review for s in plan.steps] == ["2026-11-01", "2026-11-05", "2026-11-03"]
+
+
 # ---------------------------------------------------------------- API
 
 

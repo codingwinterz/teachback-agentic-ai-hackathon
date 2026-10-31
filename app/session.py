@@ -13,12 +13,12 @@ from typing import Callable
 
 from pydantic import ValidationError
 
-from app import config, prompts, tools
+from app import config, prompts, scoring, tools
 from app.agent import Decider, SingleShotDecider, _log_llm, run_attempt
 from app.llm import LLM, LLMError, LLMResult
 from app.schemas import (
-    AgentStep, AttemptResult, Decision, DecisionContext, FinalChoice, SessionStepView, SessionView,
-    ToolCall,
+    AgentStep, AttemptResult, Decision, DecisionContext, FinalChoice, PlanStep, SessionStepView,
+    SessionView, StudyPlan, ToolCall,
 )
 
 WEAK = 0.4  # below this a concept counts as failing; prerequisites must reach it to unlock
@@ -362,6 +362,114 @@ def apply_walk_back(conn: sqlite3.Connection, session_id: int, concept_id: str, 
     return walked
 
 
+# ---------------------------------------------------------------- study plan
+
+
+def _review_date(next_review_at: str | None) -> str | None:
+    return next_review_at[:10] if next_review_at else None
+
+
+def _plan_line(r: dict) -> str:
+    return (f"- {r['concept_id']} | {r['name']} | mastery {r['mastery']:.2f} | "
+            f"misconceptions: {json.dumps(r['misconceptions'])} | next review {r['next_review'] or 'none'}")
+
+
+def plan_rows(conn: sqlite3.Connection, session_id: int) -> tuple[list[dict], list[dict]]:
+    """Concepts practised in the session (in order), and other weak concepts to pad the plan."""
+    states = _states(conn)
+    names = {c["id"]: c["name"] for c in _concepts(conn)}
+
+    def row(cid: str) -> dict:
+        s = states.get(cid, {})
+        return {"concept_id": cid, "name": names[cid], "mastery": float(s.get("mastery", 0.0)),
+                "misconceptions": tools.get_open_misconceptions(conn, cid),
+                "next_review": _review_date(s.get("next_review_at"))}
+
+    practised: list[str] = []
+    for r in conn.execute("SELECT concept_id FROM session_steps WHERE session_id = ? AND attempt_id IS NOT NULL "
+                          "ORDER BY step_no", (session_id,)):
+        if r["concept_id"] not in practised:
+            practised.append(r["concept_id"])
+    # pad with weak attempted concepts, then the rest in "weakest unlocked first" order
+    concepts = _concepts(conn)
+    depths = concept_depths(concepts)
+    unlocked_first = sorted(
+        concepts,
+        key=lambda c: (not all(_mastery(states, p) >= WEAK for p in c["prerequisites"]),
+                       _mastery(states, c["id"]), depths[c["id"]], concepts.index(c)))
+    extra_ids: list[str] = []
+    for cid in [w["concept_id"] for w in list_weak_concepts(conn, limit=10)] + [c["id"] for c in unlocked_first]:
+        if cid not in practised and cid not in extra_ids and _mastery(states, cid) < MASTERED:
+            extra_ids.append(cid)
+    return [row(c) for c in practised], [row(c) for c in extra_ids[:5]]
+
+
+def plan_from_rows(rows: list[dict], extra: list[dict], today: str, source: str = "offline") -> StudyPlan:
+    """Rule-based plan (used by the fake LLM and as the offline fallback): weakest practised first,
+    padded with other weak concepts to at least 3 steps, at most 5."""
+    from datetime import date, timedelta
+
+    tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()
+    in_three = (date.fromisoformat(today) + timedelta(days=3)).isoformat()
+    chosen = sorted(rows, key=lambda r: r["mastery"])[:5]
+    for r in extra:
+        if len(chosen) >= 3:
+            break
+        chosen.append(r)
+    steps = []
+    for r in chosen:
+        m = r["misconceptions"][0] if r["misconceptions"] else None
+        if m:
+            todo = f"Re-explain {r['name']} out loud and fix the idea that it {m.removeprefix('thinks ')}."
+        elif r["mastery"] < 0.4:
+            todo = f"Re-read the key points of {r['name']}, then explain it again from scratch."
+        elif r["mastery"] < 0.7:
+            todo = f"Practise {r['name']} once more and cover what you missed."
+        else:
+            todo = f"Quick out-loud review of {r['name']}."
+        steps.append(PlanStep(concept_id=r["concept_id"], concept_name=r["name"], what_to_do=todo,
+                              misconception=m, next_review=r["next_review"] or (tomorrow if r["mastery"] < 0.7 else in_three)))
+    focus = steps[0].concept_name if steps else "your weakest concept"
+    summary = (f"You practised {len(rows)} concept{'s' if len(rows) != 1 else ''} this session. "
+               f"Start with {focus}." if rows else f"Start with {focus}.")
+    return StudyPlan(summary=summary, steps=steps, source=source)
+
+
+def generate_plan(conn: sqlite3.Connection, llm: LLM, session_id: int, log: tools.AgentLogger,
+                  use_llm: bool = True) -> StudyPlan:
+    """One structured LLM call; offline rule-based plan if there was nothing to analyse, or the
+    budget/quota ran out, or the model returned something unusable."""
+    rows, extra = plan_rows(conn, session_id)
+    today = scoring.utcnow().date().isoformat()
+    plan = None
+    if use_llm and rows:
+        try:
+            out = llm.structured(prompts.PLAN_SYSTEM,
+                                 prompts.PLAN_USER.format(today=today, rows="\n".join(map(_plan_line, rows)),
+                                                          extra="\n".join(map(_plan_line, extra)) or "(none)"),
+                                 StudyPlan, thinking="low")
+            _log_llm(log, "plan", "llm.plan", {"concepts": [r["concept_id"] for r in rows]}, out)
+            known = {c["id"] for c in _concepts(conn)}
+            if all(s.concept_id in known for s in out.parsed.steps):
+                plan = out.parsed.model_copy(update={"source": "model"})
+        except (LLMError, ValidationError) as e:
+            log.log("plan", "fallback.offline_plan", {"error": str(e)[:300]}, {})
+    if plan is None:
+        plan = plan_from_rows(rows, extra, today)
+        log.log("plan", "plan_from_rows", {"concepts": [r["concept_id"] for r in rows]}, plan.model_dump())
+    conn.execute("UPDATE sessions SET plan_json = ? WHERE id = ?", (plan.model_dump_json(), session_id))
+    conn.commit()
+    return plan
+
+
+def finish_session(conn: sqlite3.Connection, llm: LLM, session_id: int, status: str, message: str,
+                   log: tools.AgentLogger, use_llm: bool = True) -> None:
+    end_session(conn, session_id, status, message)
+    log.step_start("plan")
+    generate_plan(conn, llm, session_id, log, use_llm=use_llm)
+    log.step_done("plan")
+
+
 # ---------------------------------------------------------------- session flow
 
 
@@ -403,10 +511,11 @@ def session_view(conn: sqlite3.Connection, session_id: int,
                              question=r["question"], action=r["action"], reason=r["reason"],
                              attempt_id=r["attempt_id"], mastery_after=r["mastery_after"]) for r in rows]
     current = next((st for st in steps if st.attempt_id is None), None) if s["status"] == "active" else None
+    plan = StudyPlan.model_validate_json(s["plan_json"]) if s["plan_json"] else None
     return SessionView(id=s["id"], status=s["status"], started_at=s["started_at"], ended_at=s["ended_at"],
                        call_count=s["call_count"], max_calls=max_calls,
                        max_questions=config.SESSION_MAX_QUESTIONS, message=s["message"],
-                       steps=steps, current=current)
+                       steps=steps, current=current, plan=plan)
 
 
 def start_session(conn: sqlite3.Connection, llm: LLM, on_event=None,
@@ -419,10 +528,20 @@ def start_session(conn: sqlite3.Connection, llm: LLM, on_event=None,
     try:
         final = ToolLoopDecider(conn, budget, session_id).choose_first(log)
     except LLMError as e:
-        end_session(conn, session_id, "stopped", stop_message(e, max_calls))
+        finish_session(conn, budget, session_id, "stopped", stop_message(e, max_calls), log, use_llm=False)
         return session_view(conn, session_id, max_calls)
     _add_step(conn, session_id, 1, final.next_concept_id, final.question, final.action, final.why)
     log.step_done("choose")
+    return session_view(conn, session_id, max_calls)
+
+
+def end_by_user(conn: sqlite3.Connection, llm: LLM, session_id: int, on_event=None,
+                max_calls: int = config.SESSION_MAX_CALLS, min_interval_s: float = 0.0) -> SessionView:
+    view = session_view(conn, session_id, max_calls)
+    if view.status == "active":
+        budget = BudgetedLLM(llm, conn, session_id, max_calls, min_interval_s)
+        log = tools.AgentLogger(conn, f"s{session_id}-end-{uuid.uuid4().hex[:6]}", on_event=on_event)
+        finish_session(conn, budget, session_id, "finished", "Session ended.", log)
     return session_view(conn, session_id, max_calls)
 
 
@@ -446,10 +565,11 @@ def answer_session(conn: sqlite3.Connection, llm: LLM, session_id: int, transcri
     budget = BudgetedLLM(llm, conn, session_id, max_calls, min_interval_s)
     last = cur.step_no >= config.SESSION_MAX_QUESTIONS
     decider: Decider = SingleShotDecider(budget) if last else ToolLoopDecider(conn, budget, session_id)
+    plan_log = tools.AgentLogger(conn, f"s{session_id}-plan-{uuid.uuid4().hex[:6]}", on_event=on_event)
     try:
         result = run_attempt(conn, budget, cur.concept_id, transcript, decider=decider, on_event=on_event)
-    except LLMError as e:
-        end_session(conn, session_id, "stopped", stop_message(e, max_calls))
+    except LLMError as e:  # budget or quota: stop, with a rule-based plan (no further calls)
+        finish_session(conn, budget, session_id, "stopped", stop_message(e, max_calls), plan_log, use_llm=False)
         return None, session_view(conn, session_id, max_calls)
 
     conn.execute(
@@ -458,8 +578,8 @@ def answer_session(conn: sqlite3.Connection, llm: LLM, session_id: int, transcri
     )
     conn.commit()
     if last:
-        end_session(conn, session_id, "finished",
-                    f"Session complete: {config.SESSION_MAX_QUESTIONS} questions answered.")
+        finish_session(conn, budget, session_id, "finished",
+                       f"Session complete: {config.SESSION_MAX_QUESTIONS} questions answered.", plan_log)
     else:
         d = _ensure_next(conn, result.decision, cur.concept_id)
         _add_step(conn, session_id, cur.step_no + 1, d.target_concept_id, d.followup_question, d.action, d.reason)

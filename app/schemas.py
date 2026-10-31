@@ -172,6 +172,27 @@ class AttemptRequest(BaseModel):
     transcript: str = Field(min_length=1)
 
 
+class PlanStep(BaseModel):
+    concept_id: str
+    concept_name: str
+    what_to_do: str = Field(description="One short instruction, e.g. 'Re-explain X and fix: ...'.")
+    misconception: str | None = Field(default=None, description="The misconception to fix, if any.")
+    next_review: str = Field(description="Suggested next review date, YYYY-MM-DD.")
+
+    @field_validator("misconception", mode="before")
+    @classmethod
+    def _blank_to_none(cls, v):
+        return None if isinstance(v, str) and v.strip().lower() in EMPTY_STRINGS else v
+
+
+class StudyPlan(BaseModel):
+    """End-of-session plan: 3 to 5 concrete steps."""
+
+    summary: str = Field(description="One or two sentences addressed to the student.")
+    steps: list[PlanStep] = Field(min_length=3, max_length=5)
+    source: str = "model"  # "model" or "offline" (rule-based when the budget/quota ran out)
+
+
 class SessionAnswerRequest(BaseModel):
     transcript: str = Field(min_length=1)
 
@@ -198,6 +219,7 @@ class SessionView(BaseModel):
     message: str | None = None
     steps: list[SessionStepView]
     current: SessionStepView | None = None  # the open question, if any
+    plan: StudyPlan | None = None
 
 
 class LessonAnswerRequest(BaseModel):

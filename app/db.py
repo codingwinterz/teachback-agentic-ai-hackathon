@@ -100,6 +100,7 @@ MIGRATIONS = [
     ("learner_state", "is_sample", "INTEGER NOT NULL DEFAULT 0"),
     ("misconceptions", "is_sample", "INTEGER NOT NULL DEFAULT 0"),
     ("attempts", "is_sample", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "plan_json", "TEXT"),
 ]
 
 

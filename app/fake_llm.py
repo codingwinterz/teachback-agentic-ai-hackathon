@@ -14,7 +14,7 @@ from app import hedging
 from app.llm import LLMResult
 from app.schemas import (
     AgentStep, CheckResult, CleanResult, Decision, FinalChoice, GradeResult, Lesson, Misconception,
-    ToolCall,
+    StudyPlan, ToolCall,
 )
 
 ABSOLUTES = re.compile(r"\b(always|never|only|guarantee[sd]?|every time|completely)\b", re.I)
@@ -194,6 +194,23 @@ def _agent_step(user: str) -> AgentStep:
         why=why))
 
 
+PLAN_LINE = re.compile(
+    r"^- (\S+) \| (.+?) \| mastery ([\d.]+) \| misconceptions: (\[.*?\]) \| next review (\S+)$", re.M)
+
+
+def _plan(user: str) -> StudyPlan:
+    from app.session import plan_from_rows
+
+    def rows(section: str) -> list[dict]:
+        return [{"concept_id": m[1], "name": m[2], "mastery": float(m[3]), "misconceptions": json.loads(m[4]),
+                 "next_review": None if m[5] == "none" else m[5]} for m in PLAN_LINE.finditer(section)]
+
+    today = _between(user, "Today:", "\n")
+    practised = rows(_between(user, "Session results", "Other concepts"))
+    extra = rows(_between(user, "Other concepts to consider"))
+    return plan_from_rows(practised, extra, today, source="model")
+
+
 class FakeLLM:
     model = "fake-dev"
 
@@ -202,7 +219,7 @@ class FakeLLM:
 
     def structured(self, system: str, user: str, schema: type[BaseModel], thinking: str | None = None) -> LLMResult:
         handlers = {CleanResult: _clean, GradeResult: _grade, Decision: _decide,
-                    Lesson: _teach, CheckResult: _check, AgentStep: _agent_step}
+                    Lesson: _teach, CheckResult: _check, AgentStep: _agent_step, StudyPlan: _plan}
         if schema not in handlers:
             raise ValueError(f"FakeLLM has no handler for {schema.__name__}")
         start = time.perf_counter()

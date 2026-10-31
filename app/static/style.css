@@ -204,6 +204,21 @@ button.quiet { background: transparent; color: var(--ink); border: 1px solid var
 .tool-calls code { font-size: 0.8rem; }
 .tool-calls .res { color: var(--pencil); }
 
+.plan {
+  margin-top: 2rem;
+  padding: 1.1rem 1.4rem;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 6px solid var(--sage);
+  border-radius: 4px;
+}
+.plan-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.plan-head h2 { margin: 0; }
+.plan-summary { font-family: var(--read); font-size: 1.05rem; margin: 0.6rem 0; max-width: 68ch; }
+.plan ol { padding-left: 1.4rem; list-style: decimal; }
+.plan li { padding: 0.35rem 0; max-width: 70ch; }
+.plan .review { display: block; color: var(--pencil); font-size: 0.85rem; }
+
 .session-log { margin-top: 2rem; }
 .session-log ol { padding-left: 1.4rem; list-style: decimal; }
 .session-log li { padding: 0.35rem 0; border-bottom: 1px dotted var(--rule); max-width: 70ch; }

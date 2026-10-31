@@ -546,6 +546,7 @@ async function startSession() {
   busy = true;
   $("start-session").disabled = true;
   $("session-message").hidden = true;
+  $("plan").hidden = true;
   resetTrace(START_STEPS);
   try {
     await streamPost("/session/start");
@@ -568,6 +569,46 @@ async function endSession() {
   } finally {
     busy = false;
   }
+}
+
+// Plain-text version of a study plan for the clipboard.
+function planText(plan) {
+  const lines = ["TeachBack study plan", plan.summary, ""];
+  plan.steps.forEach((s, i) => {
+    lines.push(`${i + 1}. ${s.concept_name}: ${s.what_to_do}`);
+    if (s.misconception) lines.push(`   Fix: ${s.misconception}`);
+    lines.push(`   Review by ${s.next_review}`);
+  });
+  return lines.join("\n");
+}
+
+function renderPlan(plan) {
+  $("plan").hidden = !plan;
+  if (!plan) return;
+  $("plan-summary").textContent = plan.summary;
+  $("plan-steps").replaceChildren(...plan.steps.map((s) =>
+    el("li", {},
+      el("strong", {}, s.concept_name), `: ${s.what_to_do}`,
+      el("span", { class: "review" }, `Review by ${s.next_review}`))));
+  $("plan-source").textContent = plan.source === "offline"
+    ? "Built from your results by rules, without an AI call (nothing answered yet, or the request budget or quota ran out)."
+    : "";
+  $("plan-source").hidden = plan.source !== "offline";
+  $("copy-plan").onclick = async () => {
+    const text = planText(plan);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch { // clipboard API blocked (http, iframe): fall back to a temporary textarea
+      const t = el("textarea", { style: "position:fixed;opacity:0" });
+      t.value = text;
+      document.body.append(t);
+      t.select();
+      document.execCommand("copy");
+      t.remove();
+    }
+    $("copy-plan").textContent = "Copied";
+    setTimeout(() => { $("copy-plan").textContent = "Copy"; }, 1500);
+  };
 }
 
 const ACTION_SHORT = {
@@ -601,6 +642,7 @@ function renderSession(view) {
   }
   $("session-message").textContent = view.message ?? "";
   $("session-message").hidden = !view.message || Boolean(active);
+  renderPlan(active ? null : view.plan);
 
   $("session-log").hidden = view.steps.length === 0;
   $("session-steps").replaceChildren(...view.steps.map((s) =>

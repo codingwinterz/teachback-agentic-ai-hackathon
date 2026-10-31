@@ -51,6 +51,18 @@ def test_due_text():
         ["due today", "overdue by 1 day", "overdue by 3 days"]
 
 
+def test_plan_text_for_the_clipboard():
+    plan = {"summary": "Start with Overfitting.", "steps": [
+        {"concept_name": "Overfitting", "what_to_do": "Re-explain it.", "misconception": "thinks more data always fixes it",
+         "next_review": "2026-11-01"},
+        {"concept_name": "K-Means", "what_to_do": "Quick review.", "misconception": None, "next_review": "2026-11-03"}]}
+    text = _run(["planText"], f"planText({json.dumps(plan)})")
+    assert text.splitlines() == [
+        "TeachBack study plan", "Start with Overfitting.", "",
+        "1. Overfitting: Re-explain it.", "   Fix: thinks more data always fixes it", "   Review by 2026-11-01",
+        "2. K-Means: Quick review.", "   Review by 2026-11-03"]
+
+
 def test_tool_label_formats_args():
     assert _run(["toolLabel"], 'toolLabel("tool.pick_next_concept", {strategy: "due"})') == \
         "pick_next_concept(strategy=due)"
