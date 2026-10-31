@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import config, db, demo, graph, session
+from app import config, db, demo, graph, history, session
 from app.agent import AlreadyAnswered, answer_lesson, run_attempt
 from app.llm import LLMError, get_llm
 from app.schemas import (
@@ -156,6 +156,15 @@ def health():
 def get_due_reviews():
     """Concepts whose next review time has passed (same data the session's list_due_reviews tool reads)."""
     return session.list_due_reviews(conn)
+
+
+@app.get("/concepts/{concept_id}/history")
+def get_concept_history(concept_id: str):
+    """Timeline of attempts for one concept: date, mastery after, misconceptions seen."""
+    try:
+        return history.concept_history(conn, concept_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.get("/graph")

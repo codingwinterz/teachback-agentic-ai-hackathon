@@ -247,6 +247,19 @@ button.quiet { background: transparent; color: var(--ink); border: 1px solid var
 .check-feedback.right { color: var(--sage); }
 .check-feedback.wrong { color: var(--alert); }
 
+/* ---------- attempt history ---------- */
+.history { margin-top: 2rem; }
+.history-list { border-left: 2px solid var(--rule); margin-left: 0.4rem; padding-left: 1rem; }
+.history-list li { position: relative; padding: 0.3rem 0 0.5rem; font-size: 0.9rem; max-width: 70ch; }
+.history-list li::before {
+  content: ""; position: absolute; left: calc(-1rem - 6px); top: 0.6rem;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--sheet); border: 2px solid var(--pencil);
+}
+.history-list .date { color: var(--pencil); margin-right: 0.5rem; font-variant-numeric: tabular-nums; }
+.history-list .m { font-weight: 700; }
+.history-list .misc { display: block; font-size: 0.82rem; color: var(--alert); }
+.history-list .sample-tag { font-size: 0.75rem; color: var(--pencil); border: 1px dashed var(--pencil); border-radius: 3px; padding: 0 0.3rem; margin-left: 0.4rem; }
+
 /* ---------- review today ---------- */
 .due-list { margin-bottom: 1.5rem; }
 .due-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px dotted var(--rule); font-size: 0.9rem; }

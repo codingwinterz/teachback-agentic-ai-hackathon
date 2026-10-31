@@ -63,6 +63,10 @@ def test_plan_text_for_the_clipboard():
         "2. K-Means: Quick review.", "   Review by 2026-11-03"]
 
 
+def test_short_date():
+    assert _run(["shortDate"], '["2026-10-29 23:59:00", "2026-11-01 00:00:00"].map(shortDate)') == ["Oct 29", "Nov 1"]
+
+
 def test_tool_label_formats_args():
     assert _run(["toolLabel"], 'toolLabel("tool.pick_next_concept", {strategy: "due"})') == \
         "pick_next_concept(strategy=due)"

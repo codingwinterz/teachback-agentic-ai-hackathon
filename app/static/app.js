@@ -76,6 +76,7 @@ function selectConcept(id, { focus = true } = {}) {
   $("concept").value = id;
   showConcept();
   renderGraph();
+  loadHistory(id);
   if (focus) $("transcript").focus();
 }
 
@@ -428,6 +429,27 @@ function renderResult(r) {
   $("result").hidden = false;
 }
 
+// ---------- attempt history ----------
+
+// "2026-10-29 14:05:00" (UTC) -> "Oct 29"
+function shortDate(utc) {
+  const d = new Date(`${utc.replace(" ", "T")}Z`);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+async function loadHistory(conceptId) {
+  const items = await getJSON(`/concepts/${encodeURIComponent(conceptId)}/history`).catch(() => []);
+  if (conceptId !== $("concept").value) return; // the user moved on while this loaded
+  $("history").hidden = items.length === 0;
+  $("history-concept").textContent = byId[conceptId]?.name ?? conceptId;
+  $("history-list").replaceChildren(...items.slice().reverse().map((h) =>
+    el("li", {},
+      el("span", { class: "date" }, shortDate(h.created_at)),
+      "mastery after ", el("span", { class: "m" }, `${Math.round(h.mastery_after * 100)}%`),
+      h.is_sample ? el("span", { class: "sample-tag" }, "sample") : null,
+      h.misconceptions.length ? el("span", { class: "misc" }, `Misconception: ${h.misconceptions.join("; ")}`) : null)));
+}
+
 // ---------- lesson card ----------
 
 let lessonId = null;
@@ -665,6 +687,7 @@ async function handleEvent(e) {
     await refreshState();
     renderResult(e.data);
     renderLesson(e.data);
+    loadHistory(e.data.concept_id);
   } else if (e.type === "session") {
     renderSession(e.data);
     await refreshState(); // after renderSession so the graph sees the new path
