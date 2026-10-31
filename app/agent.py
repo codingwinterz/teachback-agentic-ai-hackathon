@@ -2,11 +2,12 @@
 
 import json
 import sqlite3
+import time
 import uuid
 from typing import Protocol
 
 from app import hedging, prompts, scoring, tools
-from app.llm import LLM
+from app.llm import LLM, LLMResult
 from app.schemas import (
     AttemptResult, CleanResult, Decision, DecisionContext, GradeResult,
 )
@@ -36,9 +37,16 @@ class SingleShotDecider:
             next_ids=ctx.next_concept_ids,
         )
         out = self.llm.structured(prompts.DECIDE_SYSTEM, user, Decision)
-        log.log("decide", "llm.decide", {"concept_id": ctx.concept.id},
-                {"output": out.parsed.model_dump(), "raw_text": out.raw_text})
+        _log_llm(log, "decide", "llm.decide", {"concept_id": ctx.concept.id}, out)
         return out.parsed
+
+
+def _log_llm(log: tools.AgentLogger, step: str, tool_name: str, args: dict, out: LLMResult) -> None:
+    log.log(
+        step, tool_name, args,
+        {"output": out.parsed.model_dump(), "raw_text": out.raw_text, "timing": out.timing()},
+        model=out.model, elapsed_s=out.elapsed_s,
+    )
 
 
 def run_attempt(
@@ -48,6 +56,7 @@ def run_attempt(
     transcript: str,
     decider: Decider | None = None,
 ) -> AttemptResult:
+    run_start = time.perf_counter()
     decider = decider or SingleShotDecider(llm)
     log = tools.AgentLogger(conn, uuid.uuid4().hex[:8])
     concept = tools.get_concept(conn, log, concept_id)
@@ -59,13 +68,14 @@ def run_attempt(
         CleanResult,
     )
     clean: CleanResult = out.parsed
-    log.log("clean", "llm.clean", {"chars": len(transcript)},
-            {"output": clean.model_dump(), "raw_text": out.raw_text})
+    _log_llm(log, "clean", "llm.clean", {"chars": len(transcript)}, out)
 
+    start = time.perf_counter()
     counts = hedging.code_hedging(transcript)
     hedge = hedging.blend(clean.hedging_score, counts.score)
     hedge_info = {"llm": clean.hedging_score, "code": counts.model_dump(), "blended": hedge}
-    log.log("clean", "hedging.blend", {"llm_score": clean.hedging_score}, hedge_info)
+    log.log("clean", "hedging.blend", {"llm_score": clean.hedging_score}, hedge_info,
+            elapsed_s=round(time.perf_counter() - start, 4))
 
     # 2. GRADE
     known = tools.get_open_misconceptions(conn, concept_id)
@@ -80,11 +90,10 @@ def run_attempt(
         GradeResult,
     )
     grade: GradeResult = out.parsed
-    log.log("grade", "llm.grade", {"claims": len(clean.claims), "known_labels": known},
-            {"output": grade.model_dump(), "raw_text": out.raw_text})
+    _log_llm(log, "grade", "llm.grade", {"claims": len(clean.claims), "known_labels": known}, out)
 
     # 3. UPDATE
-    prior = tools.get_learner_state(conn, log, concept_id)
+    prior = tools.get_learner_state(conn, log, concept_id, step="update")
     score = scoring.attempt_score(grade, hedge)
     state = tools.update_learner_state(
         conn, log, concept_id,
@@ -100,7 +109,9 @@ def run_attempt(
         hedging_score=hedge,
         attempt_score=score,
         state=state,
-        prerequisite_states=[tools.get_learner_state(conn, log, p) for p in concept.prerequisites],
+        prerequisite_states=[
+            tools.get_learner_state(conn, log, p, step="decide") for p in concept.prerequisites
+        ],
         next_concept_ids=tools.get_dependent_concepts(conn, concept_id),
     )
     decision = decider.decide(ctx, log)
@@ -124,5 +135,7 @@ def run_attempt(
         attempt_score=score,
         state=state,
         decision=decision,
+        step_timings=log.step_timings(),
+        total_s=round(time.perf_counter() - run_start, 2),
         agent_log=log.entries(),
     )

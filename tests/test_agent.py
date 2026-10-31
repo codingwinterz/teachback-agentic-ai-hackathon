@@ -61,7 +61,8 @@ class FakeLLM:
     def structured(self, system, user, schema):
         self.calls.append((schema.__name__, user))
         out = self.outputs[schema]
-        return LLMResult(parsed=out, raw_text=out.model_dump_json())
+        return LLMResult(parsed=out, raw_text=out.model_dump_json(), model="fake-model",
+                         elapsed_s=0.5, last_call_s=0.5)
 
 
 def test_code_hedging_counts_messy_transcript():
@@ -96,6 +97,14 @@ def test_core_loop_with_fake_llm(conn):
     tool_names = [e["tool_name"] for e in result.agent_log]
     assert tool_names[:4] == ["get_concept", "llm.clean", "hedging.blend", "llm.grade"]
     assert "update_learner_state" in tool_names and tool_names[-1] == "llm.decide"
+
+    # model + elapsed_s recorded per entry, and summarized per step
+    llm_entries = [e for e in result.agent_log if e["tool_name"].startswith("llm.")]
+    assert all(e["model"] == "fake-model" and e["elapsed_s"] == 0.5 for e in llm_entries)
+    assert all(e["elapsed_s"] is not None for e in result.agent_log)
+    assert list(result.step_timings) == ["context", "clean", "grade", "update", "decide"]
+    assert result.step_timings["clean"] >= 0.5 and result.step_timings["decide"] >= 0.5
+    assert result.total_s >= 0
 
     # second attempt: misconception count increments, mastery is a moving average
     second = run_attempt(conn, llm, "overfitting", MESSY)
@@ -154,6 +163,8 @@ def test_gemini_falls_back_to_next_model_when_primary_stays_overloaded():
 
     assert client.called_models == ["primary"] * 3 + ["backup"]
     assert result.model == "backup"
+    assert [(f["model"], f["status"]) for f in result.failed_attempts] == [("primary", 503)] * 3
+    assert result.timing()["api_retries"] == 3
 
     client = FakeGeminiClient([overloaded() for _ in range(6)])
     llm = GeminiLLM(model="primary", client=client, sleep=lambda s: None, fallback_models=["backup"])
@@ -182,6 +193,15 @@ def test_gemini_retries_once_on_validation_failure():
         GeminiLLM(model="m", client=client, sleep=lambda s: None).structured("s", "u", Decision)
 
 
+def test_init_db_migrates_old_agent_log(tmp_path):
+    c = db.connect(str(tmp_path / "old.db"))
+    c.execute("""CREATE TABLE agent_log (id INTEGER PRIMARY KEY, run_id TEXT, step TEXT,
+                 tool_name TEXT, args_json TEXT, result_json TEXT, created_at TEXT)""")
+    db.init_db(c)
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(agent_log)")}
+    assert {"model", "elapsed_s"} <= cols
+
+
 @pytest.mark.skipif(not config.GEMINI_API_KEY, reason="needs GEMINI_API_KEY")
 def test_core_loop_real_model(conn):
     from app.llm import get_llm
@@ -193,6 +213,14 @@ def test_core_loop_real_model(conn):
             print(f"\n--- {e['tool_name']} ---\n{e['result']['raw_text']}")
     print("\n===== HEDGING =====\n" + json.dumps(result.hedging, indent=2))
     print(f"\nattempt_score={result.attempt_score}  mastery={result.state.mastery}")
+    print("\n===== TIMING PER LLM CALL =====")
+    for e in result.agent_log:
+        if e["tool_name"].startswith("llm."):
+            t = e["result"]["timing"]
+            print(f"{e['tool_name']:<11} model={t['model']:<22} elapsed={t['elapsed_s']:>6.2f}s "
+                  f"last_call={t['last_call_s']:>6.2f}s api_retries={t['api_retries']} "
+                  f"validation_retries={t['validation_retries']} failed={t['failed_attempts']}")
+    print(f"step_timings={result.step_timings}  total={result.total_s}s")
 
     assert result.clean.claims
     assert not any("too well" in c.lower() and "noise" not in c.lower() for c in result.clean.claims)

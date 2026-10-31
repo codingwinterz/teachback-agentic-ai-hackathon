@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS misconceptions (
     UNIQUE (concept_id, label)
 );
 
--- run_id groups the entries of one attempt (addition to the CLAUDE.md schema).
+-- run_id, model, elapsed_s are additions to the CLAUDE.md schema.
 CREATE TABLE IF NOT EXISTS agent_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
@@ -52,9 +52,17 @@ CREATE TABLE IF NOT EXISTS agent_log (
     tool_name TEXT NOT NULL,
     args_json TEXT NOT NULL,
     result_json TEXT NOT NULL,
+    model TEXT,
+    elapsed_s REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
+
+# Columns added after first release: (table, column, type). Applied if missing.
+MIGRATIONS = [
+    ("agent_log", "model", "TEXT"),
+    ("agent_log", "elapsed_s", "REAL"),
+]
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:
@@ -66,6 +74,10 @@ def connect(path: str | None = None) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    for table, column, col_type in MIGRATIONS:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
     conn.commit()
 
 

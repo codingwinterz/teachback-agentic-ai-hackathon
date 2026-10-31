@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import time
 
 from app.schemas import Concept, LearnerState, Misconception
 
@@ -11,13 +12,26 @@ class AgentLogger:
         self.conn = conn
         self.run_id = run_id
 
-    def log(self, step: str, tool_name: str, args: dict, result) -> None:
+    def log(
+        self, step: str, tool_name: str, args: dict, result,
+        model: str | None = None, elapsed_s: float | None = None,
+    ) -> None:
         self.conn.execute(
-            "INSERT INTO agent_log (run_id, step, tool_name, args_json, result_json) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO agent_log (run_id, step, tool_name, args_json, result_json, model, elapsed_s)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (self.run_id, step, tool_name, json.dumps(args, default=str),
-             json.dumps(result, default=str)),
+             json.dumps(result, default=str), model, elapsed_s),
         )
         self.conn.commit()
+
+    def step_timings(self) -> dict:
+        """Seconds per step for this run, summed over its log entries."""
+        rows = self.conn.execute(
+            """SELECT step, ROUND(SUM(COALESCE(elapsed_s, 0)), 3) AS s FROM agent_log
+               WHERE run_id = ? GROUP BY step ORDER BY MIN(id)""",
+            (self.run_id,),
+        ).fetchall()
+        return {r["step"]: r["s"] for r in rows}
 
     def entries(self) -> list[dict]:
         rows = self.conn.execute(
@@ -29,7 +43,12 @@ class AgentLogger:
         ]
 
 
+def _since(start: float) -> float:
+    return round(time.perf_counter() - start, 4)
+
+
 def get_concept(conn: sqlite3.Connection, log: AgentLogger, concept_id: str) -> Concept:
+    start = time.perf_counter()
     row = conn.execute("SELECT * FROM concepts WHERE id = ?", (concept_id,)).fetchone()
     if row is None:
         raise KeyError(f"Unknown concept: {concept_id}")
@@ -38,14 +57,19 @@ def get_concept(conn: sqlite3.Connection, log: AgentLogger, concept_id: str) -> 
         reference_notes=row["reference_notes"],
         prerequisites=json.loads(row["prerequisites_json"]),
     )
-    log.log("context", "get_concept", {"concept_id": concept_id}, {"name": concept.name})
+    log.log("context", "get_concept", {"concept_id": concept_id}, {"name": concept.name},
+            elapsed_s=_since(start))
     return concept
 
 
-def get_learner_state(conn: sqlite3.Connection, log: AgentLogger, concept_id: str) -> LearnerState:
+def get_learner_state(
+    conn: sqlite3.Connection, log: AgentLogger, concept_id: str, step: str = "context"
+) -> LearnerState:
+    start = time.perf_counter()
     row = conn.execute("SELECT * FROM learner_state WHERE concept_id = ?", (concept_id,)).fetchone()
     state = LearnerState(**dict(row)) if row else LearnerState(concept_id=concept_id)
-    log.log("context", "get_learner_state", {"concept_id": concept_id}, state.model_dump())
+    log.log(step, "get_learner_state", {"concept_id": concept_id}, state.model_dump(),
+            elapsed_s=_since(start))
     return state
 
 
@@ -70,6 +94,7 @@ def update_learner_state(
     confidence: float,
     misconceptions: list[Misconception],
 ) -> LearnerState:
+    start = time.perf_counter()
     conn.execute(
         """UPDATE learner_state SET mastery = ?, confidence = ?, attempts_count = attempts_count + 1
            WHERE concept_id = ?""",
@@ -90,5 +115,6 @@ def update_learner_state(
         {"concept_id": concept_id, "mastery": mastery, "confidence": confidence,
          "misconceptions": [m.label for m in misconceptions]},
         state.model_dump(),
+        elapsed_s=_since(start),
     )
     return state

@@ -119,4 +119,6 @@ class AttemptResult(BaseModel):
     attempt_score: float
     state: LearnerState
     decision: Decision
-    agent_log: list[dict]
+    step_timings: dict[str, float]  # seconds per step: context, clean, grade, update, decide
+    total_s: float
+    agent_log: list[dict]  # each entry includes model and elapsed_s

@@ -43,3 +43,10 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - `max_length=3` on `missing_points` so the cap is enforced by the schema (Gemini enforces maxItems) and by Pydantic, not just the prompt.
 
 **Result:** same messy transcript, mastery 0.258 -> 0.398 (3 correct, 2 missing, 1 misconception; blended hedge 0.673).
+
+### Latency instrumentation
+**I decided:** record model name and elapsed seconds per step in agent_log and the API response; flag any single call over 10s without retries before changing anything.
+
+**AI generated (I approved):** `model`/`elapsed_s` columns (+ startup migration), `step_timings`/`total_s` in the response, and per-LLM-call `elapsed_s` vs `last_call_s` plus failed attempts, so slow calls and retries can be told apart.
+
+**Observed (2 runs, gemini-3.6-flash):** run 1 = 21.3s (clean 8.2, grade 4.6, decide 8.6, no retries). Run 2 = 65.0s: clean 26.0s single call with no retries, decide 33.7s (two 503s, final call 15.8s). Fallback never fired.

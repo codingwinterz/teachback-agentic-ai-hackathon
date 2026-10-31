@@ -3,7 +3,7 @@
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -26,7 +26,21 @@ class LLMError(RuntimeError):
 class LLMResult:
     parsed: BaseModel
     raw_text: str
-    model: str | None = None
+    model: str | None = None  # the model that produced `parsed`
+    elapsed_s: float = 0.0  # whole structured() call, including retries and backoff sleeps
+    last_call_s: float = 0.0  # just the successful API request
+    failed_attempts: list[dict] = field(default_factory=list)  # [{"model", "status"}]
+    validation_retries: int = 0
+
+    def timing(self) -> dict:
+        return {
+            "model": self.model,
+            "elapsed_s": self.elapsed_s,
+            "last_call_s": self.last_call_s,
+            "api_retries": len(self.failed_attempts),
+            "failed_attempts": self.failed_attempts,
+            "validation_retries": self.validation_retries,
+        }
 
 
 class LLM(Protocol):
@@ -68,8 +82,9 @@ class GeminiLLM:
         self.models = [model] + [m for m in fallbacks if m != model]
         self.sleep = sleep
 
-    def _generate(self, system: str, user: str, schema: type[T]):
-        """generate_content with backoff on 429/5xx, then fall through the model chain."""
+    def _generate(self, system: str, user: str, schema: type[T], failures: list[dict]):
+        """generate_content with backoff on 429/5xx, then fall through the model chain.
+        Appends each failed attempt to `failures`; returns (response, model, call_seconds)."""
         from google.genai import errors, types
 
         cfg = types.GenerateContentConfig(
@@ -80,12 +95,17 @@ class GeminiLLM:
         last_error: errors.APIError | None = None
         for model in self.models:
             for attempt in range(MAX_RETRIES_PER_MODEL + 1):
+                start = time.perf_counter()
                 try:
                     resp = self.client.models.generate_content(model=model, contents=user, config=cfg)
-                    return resp, model
+                    return resp, model, round(time.perf_counter() - start, 2)
                 except errors.APIError as e:
                     if e.code not in RETRYABLE_STATUS:
                         raise LLMError(f"Gemini API error {e.code} on {model}: {e.message}") from e
+                    failures.append({
+                        "model": model, "status": e.code,
+                        "call_s": round(time.perf_counter() - start, 2),
+                    })
                     last_error = e
                     if attempt < MAX_RETRIES_PER_MODEL:
                         delay = _retry_hint_seconds(e) or min(MAX_DELAY_S, BASE_DELAY_S * 2**attempt)
@@ -97,8 +117,10 @@ class GeminiLLM:
     def structured(self, system: str, user: str, schema: type[T]) -> LLMResult:
         prompt = user
         last_error: Exception | None = None
-        for _ in range(2):  # one retry with the validation error fed back
-            resp, model = self._generate(system, prompt, schema)
+        failures: list[dict] = []
+        start = time.perf_counter()
+        for validation_retry in range(2):  # one retry with the validation error fed back
+            resp, model, call_s = self._generate(system, prompt, schema, failures)
             finish = resp.candidates[0].finish_reason if resp.candidates else None
             finish_name = getattr(finish, "name", str(finish))
             raw_text = resp.text or ""
@@ -108,7 +130,13 @@ class GeminiLLM:
                 raise LLMError(f"Empty response (finish_reason={finish_name})")
             try:
                 return LLMResult(
-                    parsed=schema.model_validate_json(raw_text), raw_text=raw_text, model=model
+                    parsed=schema.model_validate_json(raw_text),
+                    raw_text=raw_text,
+                    model=model,
+                    elapsed_s=round(time.perf_counter() - start, 2),
+                    last_call_s=call_s,
+                    failed_attempts=failures,
+                    validation_retries=validation_retry,
                 )
             except ValidationError as e:
                 last_error = e
@@ -129,6 +157,7 @@ class AnthropicLLM:
         prompt = user
         last_error: Exception | None = None
         for _ in range(2):  # one retry with the validation error fed back
+            start = time.perf_counter()
             try:
                 resp = self.client.messages.parse(
                     model=self.model,
@@ -152,7 +181,11 @@ class AnthropicLLM:
             raw_text = "".join(b.text for b in resp.content if b.type == "text")
             if resp.parsed_output is None:
                 raise LLMError(f"No parsed output. Raw: {raw_text[:500]}")
-            return LLMResult(parsed=schema.model_validate(resp.parsed_output.model_dump()), raw_text=raw_text)
+            elapsed = round(time.perf_counter() - start, 2)
+            return LLMResult(
+                parsed=schema.model_validate(resp.parsed_output.model_dump()),
+                raw_text=raw_text, model=self.model, elapsed_s=elapsed, last_call_s=elapsed,
+            )
         raise LLMError(f"Validation failed after retry: {last_error}")
 
 
