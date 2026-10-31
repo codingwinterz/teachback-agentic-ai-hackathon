@@ -13,7 +13,6 @@
   <header class="top">
     <div class="title">
       <h1 class="brand">TeachBack</h1>
-      <p class="intro">Pick a concept or start a session, then explain it out loud. Dictating with Wispr Flow works in the box.</p>
     </div>
     <label class="picker">
       <span>Concept</span>
@@ -22,6 +21,16 @@
     <span id="sample-badge" class="badge sample" title="Some dashboard data is sample data, not real practice" hidden>Sample data loaded</span>
     <span id="badge" class="badge" title="Which language model is answering">…</span>
   </header>
+
+  <p id="wake-banner" class="wake-banner" role="status" hidden>
+    Waking up the server, this can take up to a minute. It will connect by itself.
+  </p>
+
+  <ol class="quickstart" aria-label="Quick start">
+    <li><span><strong>Pick a concept</strong> or start a study session.</span></li>
+    <li><span><strong>Explain it out loud.</strong> Dictate with Wispr Flow into the box; ums and restarts are fine.</span></li>
+    <li><span><strong>Get feedback:</strong> what you got right, what's missing, a mini-lesson and what to do next.</span></li>
+  </ol>
 
   <main class="layout">
     <section class="work">
@@ -51,6 +60,8 @@
           placeholder="Start dictating. Ums, restarts and “no wait” corrections are fine."></textarea>
         <div class="actions">
           <span id="wordcount" class="muted">0 words</span>
+          <span id="example-tag" class="example-tag" hidden>Example text: dictate your own to practise</span>
+          <button id="try-example" type="button" class="quiet small-button">Try an example</button>
           <span class="muted kbd-hint">Ctrl + Enter</span>
           <button id="submit" type="submit">Check my explanation</button>
         </div>

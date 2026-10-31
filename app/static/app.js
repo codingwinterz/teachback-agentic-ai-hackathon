@@ -748,11 +748,76 @@ async function handleEvent(e) {
   }
 }
 
+// ---------- "Try an example" (dictation stays the main input) ----------
+
+// Short, dictation-style sample answers: fillers and self-corrections included, and a few contain a
+// typical misconception so the tutor has something to catch.
+const EXAMPLES = {
+  supervised_learning: "Um, so supervised learning is when you train a model on examples where you already know the answer, the labels. Like, regression predicts a number and classification predicts a category, and the point is to do well on new data.",
+  train_test_split: "Okay so you split the data into training, validation and test sets. You train on the training set, tune on validation, and the test set is, uh, only for the very end so the score is honest.",
+  loss_function: "A loss function measures how wrong a prediction is, and training tries to make the average loss small. For regression people use mean squared error, and for classification it's, um, cross-entropy.",
+  gradient_descent: "Gradient descent, I think, moves the weights a little bit in the direction that, no wait, opposite to the gradient, so the loss goes down. The learning rate is the step size, and if it's too big it overshoots.",
+  linear_regression: "Linear regression predicts a number as a weighted sum of the features plus an intercept. You fit it by minimizing the squared error, and um, it only works for straight lines.",
+  logistic_regression: "Logistic regression is actually for classification, not regression. It takes a linear score, puts it through a sigmoid to get a probability, and then you use a threshold like 0.5.",
+  overfitting: "Um, okay so overfitting is when the model, uh, I think it's when it fits the training data too well, no wait, when it fits the noise in the training data. So it does great on training but badly on new data. And adding more data always fixes it.",
+  bias_variance: "Bias is error from the model being too simple, so it underfits, and variance is when the model changes a lot depending on the training set, so it overfits. More complex models have, um, lower bias but higher variance.",
+  regularization: "Regularization adds a penalty for big weights so the model doesn't overfit. L2 shrinks the weights toward zero, and L1, I think, can push some weights to exactly zero, so it kind of selects features.",
+  cross_validation: "In k-fold cross-validation you split the training data into k parts, train k times, and each time test on a different part, then average. It gives a more reliable estimate than one split.",
+  classification_metrics: "Accuracy is the share you got right, but it's misleading when the classes are imbalanced. Precision is, um, of the things you predicted positive, how many really were, and recall is how many of the real positives you found.",
+  feature_scaling: "Feature scaling puts features on similar ranges, like standardizing to mean zero and variance one. It helps gradient descent converge, and it matters for things like k-means, but not really for decision trees.",
+  decision_trees: "A decision tree asks yes or no questions about the features, splitting to make the groups purer, like with Gini impurity. If you let it grow really deep it, uh, basically memorizes the training data.",
+  ensemble_methods: "Bagging trains lots of models on random samples of the data and averages them, which reduces variance. A random forest is bagged trees that also pick random features at each split.",
+  boosting: "Boosting builds models one after another, and each new one focuses on the mistakes of the ones before. Gradient boosting fits each new tree to the, um, residuals, and it can overfit if you run too many rounds.",
+  k_means: "K-means groups points into k clusters without labels. You assign each point to the nearest centroid, move each centroid to the mean of its points, and repeat. You have to pick k first.",
+  neural_networks: "A neural network has layers of units that each take a weighted sum and then an activation function like ReLU. Without the non-linear activation the whole thing would just be, um, a linear model.",
+  backpropagation: "Backpropagation computes the gradient of the loss for every weight using the chain rule, going backward from the output layer. Then gradient descent actually updates the weights, backprop doesn't do that part.",
+};
+
+function exampleFor(conceptId, name) {
+  return EXAMPLES[conceptId] ??
+    `Um, so ${name} is, I think, something we covered. Let me explain what it is and why it matters, and one mistake people make.`;
+}
+
+function fillExample() {
+  const c = currentConcept();
+  if (!c) return;
+  $("transcript").value = exampleFor(c.id, c.name);
+  updateWordCount();
+  $("example-tag").hidden = false; // cleared as soon as the student types or dictates
+  $("transcript").focus();
+}
+
+// ---------- server wake-up (free hosting sleeps when idle) ----------
+
+// Wait for /health, retrying with growing delays (1, 2, 3, 5, 5... s) for up to maxWaitMs.
+// fetchHealth and sleep are injected so this can be tested without a server or real waiting.
+async function waitForHealth(fetchHealth, { sleep, now = () => Date.now(), onSlow = () => {}, maxWaitMs = 90000 } = {}) {
+  const delays = [1000, 2000, 3000, 5000];
+  const start = now();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchHealth();
+    } catch (err) {
+      onSlow(err);
+      const delay = delays[Math.min(attempt, delays.length - 1)];
+      if (now() - start + delay > maxWaitMs) throw new Error("The server did not wake up in time.");
+      await sleep(delay);
+    }
+  }
+}
+
+async function fetchHealthOnce() {
+  const resp = await fetch("/health", { signal: AbortSignal.timeout(8000), cache: "no-store" });
+  if (!resp.ok) throw new Error(`health returned ${resp.status}`);
+  return resp.json();
+}
+
 // ---------- boot ----------
 
 function updateWordCount() {
   const n = $("transcript").value.trim().split(/\s+/).filter(Boolean).length;
   $("wordcount").textContent = `${n} word${n === 1 ? "" : "s"}`;
+  if (n === 0) $("example-tag").hidden = true; // an emptied box is no longer an example
 }
 
 async function boot() {
@@ -766,14 +831,25 @@ async function boot() {
   $("tab-progress").addEventListener("click", () => showTab("progress"));
   $("tab-graph").addEventListener("click", () => showTab("graph"));
   $("end-session").addEventListener("click", endSession);
-  $("transcript").addEventListener("input", updateWordCount);
+  $("transcript").addEventListener("input", () => { updateWordCount(); $("example-tag").hidden = true; });
   $("transcript").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.repeat) submitAttempt(e);
   });
   $("concept").addEventListener("change", () => selectConcept($("concept").value));
+  $("try-example").addEventListener("click", fillExample);
 
   try {
-    const [health, conceptList] = await Promise.all([getJSON("/health"), getJSON("/concepts")]);
+    // Show the wake-up banner if the first health check is slow (>2.5s) or fails; retry by itself.
+    const showWake = () => { $("wake-banner").hidden = false; };
+    const slowTimer = setTimeout(showWake, 2500);
+    let health;
+    try {
+      health = await waitForHealth(fetchHealthOnce, { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), onSlow: showWake });
+    } finally {
+      clearTimeout(slowTimer);
+      $("wake-banner").hidden = true;
+    }
+    const conceptList = await getJSON("/concepts");
     const badge = $("badge");
     if (health.llm_mode === "real") {
       badge.textContent = `Real · ${health.model_chain[0]}`;
@@ -791,7 +867,8 @@ async function boot() {
     selectConcept("overfitting", { focus: false });
     await refreshState();
   } catch (err) {
-    showError("Couldn't load the app data. Check that the server is running, then retry.", () => location.reload());
+    showError("The server didn't respond after a minute and a half. It may still be starting: retry in a moment.",
+      () => location.reload());
   }
   $("transcript").focus();
 }

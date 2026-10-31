@@ -14,7 +14,7 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="needs Node
 
 
 def _fn_source(name: str) -> str:
-    m = re.search(rf"function {name}\(.*?\n\}}", APP_JS, re.S)
+    m = re.search(rf"(?:async )?function {name}\(.*?\n\}}", APP_JS, re.S)
     assert m, f"{name}() not found in app.js"
     return m.group(0)
 
@@ -87,6 +87,70 @@ def test_friendly_error_messages():
     assert out[5]["retry"] and out[6]["retry"] and "connection" in out[6]["message"]
     assert out[7]["retry"] is False and "budget" in out[7]["message"]
     assert all("Error" not in o["message"] and "429" not in o["message"] for o in out)  # no raw errors
+
+
+def _run_async(functions: list[str], body: str):
+    """Run an async snippet in Node; body must end by printing JSON with console.log."""
+    script = "\n".join(_fn_source(f) for f in functions) + f"\n(async () => {{ {body} }})();"
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
+
+
+def _examples_object() -> str:
+    m = re.search(r"const EXAMPLES = \{.*?\n\};", APP_JS, re.S)
+    assert m, "EXAMPLES not found in app.js"
+    return m.group(0)
+
+
+def test_every_concept_has_a_short_dictation_style_example():
+    ids = [c["id"] for c in json.loads((Path(__file__).resolve().parent.parent / "data" / "concepts.json")
+                                       .read_text(encoding="utf-8"))]
+    script = (_examples_object() + "\n" + _fn_source("exampleFor") +
+              f"\nconsole.log(JSON.stringify({json.dumps(ids)}.map((id) => exampleFor(id, 'X'))));")
+    out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+    assert len(out) == 18 and all(40 <= len(t) <= 400 for t in out)
+    assert all("Um, so X is" not in t for t in out)  # a real example, not the fallback
+    assert sum(bool(re.search(r"\b(um|uh|I think|no wait)\b", t, re.I)) for t in out) >= 12  # sounds dictated
+    assert "always fixes it" in out[ids.index("overfitting")]  # gives the tutor a misconception to catch
+
+
+def test_example_fallback_uses_the_concept_name():
+    script = (_examples_object() + "\n" + _fn_source("exampleFor") +
+              "\nconsole.log(JSON.stringify(exampleFor('new_concept', 'Attention')));")
+    out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout)
+    assert "Attention" in out
+
+
+def test_wait_for_health_retries_until_the_server_wakes():
+    out = _run_async(["waitForHealth"], """
+        let calls = 0; const sleeps = []; const slow = [];
+        const fetchHealth = async () => { calls++; if (calls < 3) throw new Error('down'); return {llm_mode: 'real'}; };
+        const health = await waitForHealth(fetchHealth, { sleep: async (ms) => sleeps.push(ms), onSlow: (e) => slow.push(e.message) });
+        console.log(JSON.stringify({health, calls, sleeps, slow}));
+    """)
+    assert out == {"health": {"llm_mode": "real"}, "calls": 3, "sleeps": [1000, 2000], "slow": ["down", "down"]}
+
+
+def test_wait_for_health_gives_up_after_max_wait():
+    out = _run_async(["waitForHealth"], """
+        let t = 0; const sleeps = [];
+        try {
+          await waitForHealth(async () => { throw new Error('down'); },
+            { sleep: async (ms) => { sleeps.push(ms); t += ms; }, now: () => t, maxWaitMs: 90000 });
+          console.log(JSON.stringify({ok: true}));
+        } catch (e) { console.log(JSON.stringify({ok: false, message: e.message, waited: t, maxDelay: Math.max(...sleeps)})); }
+    """)
+    assert out["ok"] is False and "did not wake up" in out["message"]
+    assert out["waited"] <= 90000 and out["maxDelay"] == 5000
+
+
+def test_page_has_quick_start_example_button_and_wake_banner():
+    html = (Path(__file__).resolve().parent.parent / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    strip = html[html.index('class="quickstart"'):html.index("</ol>", html.index('class="quickstart"'))]
+    assert strip.count("<li>") == 3 and "Wispr Flow" in strip
+    assert 'id="try-example"' in html and 'id="example-tag"' in html and "dictate your own" in html
+    assert 'id="wake-banner"' in html and "Waking up the server, this can take up to a minute" in html
+    assert 'id="transcript" autofocus' in html  # dictation is still the main input, focused on load
 
 
 def test_tool_label_formats_args():

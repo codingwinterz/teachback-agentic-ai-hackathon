@@ -78,6 +78,52 @@ select {
 .badge.fake { color: #7a5d00; background: var(--highlight); border-color: var(--highlight); }
 .badge.real { color: var(--sage); }
 
+/* ---------- quick start + wake-up banner ---------- */
+.quickstart {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 1.5rem;
+  max-width: 82rem;
+  margin: 0 auto;
+  padding: 0.9rem clamp(1rem, 4vw, 2.5rem) 0;
+  list-style: none;
+  counter-reset: qs;
+  font-size: 0.9rem;
+}
+.quickstart li { counter-increment: qs; display: flex; gap: 0.5rem; align-items: baseline; color: var(--pencil); }
+.quickstart li::before {
+  content: counter(qs);
+  flex: none;
+  font: 600 0.95rem var(--read);
+  color: var(--sheet);
+  background: var(--ink);
+  width: 1.4rem; height: 1.4rem; line-height: 1.4rem;
+  text-align: center;
+  border-radius: 50%;
+}
+.quickstart strong { color: var(--ink); }
+@media (max-width: 700px) { .quickstart { grid-template-columns: 1fr; } }
+
+.wake-banner {
+  margin: 0;
+  padding: 0.6rem clamp(1rem, 4vw, 2.5rem);
+  background: var(--highlight);
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+/* ---------- example text ---------- */
+.small-button { font-size: 0.85rem; padding: 0.4rem 0.75rem; }
+.example-tag {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #7a5d00;
+  background: var(--highlight);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+}
+
 /* ---------- layout ---------- */
 .layout {
   display: grid;
@@ -102,6 +148,7 @@ select {
   .picker select { flex: 1; max-width: none; }
   .kbd-hint { display: none; }
   #submit { margin-left: auto; }
+  .dictation .actions { gap: 0.5rem; } /* more specific: the base .actions rule comes later in the file */
 }
 
 /* ---------- dictation sheet (the hero) ---------- */
@@ -127,7 +174,7 @@ textarea {
 textarea::placeholder { color: #9aa6b2; }
 textarea:focus-visible { outline: 3px solid var(--ink); outline-offset: 0; }
 
-.actions { display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem 1rem; margin-top: 0.75rem; }
 .kbd-hint { margin-left: auto; font-size: 0.85rem; }
 button {
   font: 700 1rem var(--ui);
