@@ -103,11 +103,27 @@
       </section>
     </section>
 
-    <aside class="learner" aria-labelledby="learner-title">
-      <h2 id="learner-title">Your progress</h2>
-      <ul id="mastery" class="mastery"></ul>
-      <h2>Open misconceptions</h2>
-      <ul id="open-misconceptions" class="open-misc"></ul>
+    <aside class="learner" aria-label="Learner dashboard">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-progress" aria-selected="true" aria-controls="panel-progress">Progress</button>
+        <button type="button" role="tab" id="tab-graph" aria-selected="false" aria-controls="panel-graph">Graph</button>
+      </div>
+      <div id="panel-progress" role="tabpanel" aria-labelledby="tab-progress">
+        <h2 id="learner-title" class="visually-hidden">Your progress</h2>
+        <ul id="mastery" class="mastery"></ul>
+        <h2>Open misconceptions</h2>
+        <ul id="open-misconceptions" class="open-misc"></ul>
+      </div>
+      <div id="panel-graph" role="tabpanel" aria-labelledby="tab-graph" hidden>
+        <p class="graph-legend">
+          <span class="key key-untouched"></span>untouched
+          <span class="key key-low"></span>below 40%
+          <span class="key key-mid"></span>40–70%
+          <span class="key key-high"></span>above 70%
+        </p>
+        <div class="graph-wrap" id="graph-wrap"></div>
+        <p class="muted small">Arrows point from a prerequisite to what builds on it. Click a concept to practise it.</p>
+      </div>
     </aside>
   </main>
 

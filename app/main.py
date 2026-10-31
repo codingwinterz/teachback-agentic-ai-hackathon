@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import config, db, session
+from app import config, db, graph, session
 from app.agent import AlreadyAnswered, answer_lesson, run_attempt
 from app.llm import LLMError, get_llm
 from app.schemas import (
@@ -151,6 +151,12 @@ def health():
         "provider": config.LLM_PROVIDER if real else None,
         "model_chain": ([config.LLM_MODEL] + config.LLM_FALLBACK_MODELS) if real else ["fake-dev"],
     }
+
+
+@app.get("/graph")
+def get_graph():
+    """Nodes (depth/row layout + mastery) and prerequisite edges for the SVG graph view."""
+    return graph.graph_data(conn)
 
 
 @app.get("/concepts")

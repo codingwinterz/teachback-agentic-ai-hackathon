@@ -75,6 +75,7 @@ function showConcept() {
 function selectConcept(id, { focus = true } = {}) {
   $("concept").value = id;
   showConcept();
+  renderGraph();
   if (focus) $("transcript").focus();
 }
 
@@ -118,6 +119,119 @@ function renderMastery() {
 async function refreshState() {
   state = await getJSON("/state");
   renderMastery();
+  if (!$("panel-graph").hidden) await loadGraph();
+}
+
+// ---------- prerequisite graph (plain SVG) ----------
+
+// grey = untouched, red < 0.4, yellow 0.4–0.7, green > 0.7
+function masteryBand(mastery, attempts) {
+  if (!attempts) return "untouched";
+  if (mastery < 0.4) return "low";
+  if (mastery <= 0.7) return "mid";
+  return "high";
+}
+
+// Wrap a concept name onto at most two lines of ~maxChars.
+function splitLabel(name, maxChars = 18) {
+  if (name.length <= maxChars) return [name];
+  const words = name.split(" ");
+  let first = "";
+  while (words.length && (first + " " + words[0]).trim().length <= maxChars) first = `${first} ${words.shift()}`.trim();
+  if (!first) first = words.shift();
+  let second = words.join(" ");
+  if (second.length > maxChars) second = `${second.slice(0, maxChars - 1)}…`;
+  return second ? [first, second] : [first];
+}
+
+const G = { col: 150, row: 54, w: 128, h: 40, pad: 12 };
+let lastSession = null; // keep the walked path visible after a session ends
+let graphData = null;
+
+function svg(tag, attrs = {}, ...children) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  node.append(...children.filter(Boolean));
+  return node;
+}
+
+function curve(x1, y1, x2, y2) {
+  const dx = Math.max(30, Math.abs(x2 - x1) / 2);
+  return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+}
+
+async function loadGraph() {
+  graphData = await getJSON("/graph");
+  renderGraph();
+}
+
+function renderGraph() {
+  if (!graphData) return;
+  const pos = Object.fromEntries(graphData.nodes.map((n) => [n.id,
+    { x: G.pad + n.depth * G.col, y: G.pad + n.row * G.row }]));
+  const width = G.pad * 2 + (graphData.columns - 1) * G.col + G.w;
+  const height = G.pad * 2 + (graphData.max_rows - 1) * G.row + G.h;
+  const session = activeSession || lastSession;
+  const current = activeSession?.current?.concept_id;
+  const selected = $("concept").value;
+
+  const defs = svg("defs", {},
+    svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto" },
+      svg("path", { d: "M0,0 L10,5 L0,10 z", fill: "#a9b6c2" })),
+    svg("marker", { id: "walk-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto" },
+      svg("path", { d: "M0,0 L10,5 L0,10 z", fill: "#3a5bd9" })));
+
+  const edges = graphData.edges.filter((e) => pos[e.from] && pos[e.to]).map((e) => {
+    const a = pos[e.from], b = pos[e.to];
+    return svg("path", { class: "edge", d: curve(a.x + G.w, a.y + G.h / 2, b.x, b.y + G.h / 2), "marker-end": "url(#arrow)" });
+  });
+
+  // the session's walked path, in question order (walk-backs go right-to-left)
+  const ids = (session?.steps ?? []).map((s) => s.concept_id);
+  const walk = [];
+  for (let i = 1; i < ids.length; i++) {
+    if (ids[i] === ids[i - 1] || !pos[ids[i]] || !pos[ids[i - 1]]) continue;
+    const a = pos[ids[i - 1]], b = pos[ids[i]];
+    const forward = b.x >= a.x;
+    walk.push(svg("path", {
+      class: "walk", "marker-end": "url(#walk-arrow)",
+      d: curve(forward ? a.x + G.w : a.x, a.y + G.h / 2, forward ? b.x : b.x + G.w, b.y + G.h / 2),
+    }));
+  }
+
+  const nodes = graphData.nodes.map((n) => {
+    const p = pos[n.id];
+    const lines = splitLabel(n.name);
+    const cls = ["node", masteryBand(n.mastery, n.attempts), n.id === selected && "selected", n.id === current && "current"]
+      .filter(Boolean).join(" ");
+    const pct = n.attempts ? `${Math.round(n.mastery * 100)}%` : "not tried";
+    const g = svg("g", { class: cls, tabindex: "0", role: "button", "aria-label": `${n.name}, ${pct}` },
+      svg("title", {}, `${n.name}: ${pct}`),
+      svg("rect", { x: p.x, y: p.y, width: G.w, height: G.h, rx: "6" }),
+      ...lines.map((line, i) => svg("text", {
+        x: p.x + G.w / 2, y: p.y + G.h / 2 + (i - (lines.length - 1) / 2) * 13 + 4, "text-anchor": "middle",
+      }, line)));
+    const choose = () => { if (!activeSession) selectConcept(n.id); };
+    g.addEventListener("click", choose);
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } });
+    return g;
+  });
+
+  const wrap = $("graph-wrap");
+  wrap.replaceChildren(svg("svg", {
+    width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Prerequisite graph",
+  }, defs, ...edges, ...walk, ...nodes));
+  const focus = pos[current] || pos[selected];  // scroll the narrow panel to the concept in play
+  if (focus) wrap.scrollLeft = Math.max(0, focus.x - G.col / 2);
+}
+
+function showTab(which) {
+  const graph = which === "graph";
+  $("tab-progress").setAttribute("aria-selected", String(!graph));
+  $("tab-graph").setAttribute("aria-selected", String(graph));
+  $("panel-progress").hidden = graph;
+  $("panel-graph").hidden = !graph;
+  if (graph) loadGraph();
 }
 
 // ---------- live trace ----------
@@ -394,6 +508,7 @@ const ACTION_SHORT = {
 function renderSession(view) {
   const active = view.status === "active" && view.current;
   activeSession = active ? view : null;
+  lastSession = view;
   $("start-session").hidden = Boolean(active);
   $("end-session").hidden = !active;
   $("concept").disabled = Boolean(active);
@@ -439,8 +554,8 @@ async function handleEvent(e) {
     renderResult(e.data);
     renderLesson(e.data);
   } else if (e.type === "session") {
-    await refreshState();
     renderSession(e.data);
+    await refreshState(); // after renderSession so the graph sees the new path
   }
 }
 
@@ -457,6 +572,8 @@ async function boot() {
   $("attempt-form").addEventListener("submit", submitAttempt);
   $("check-form").addEventListener("submit", submitCheck);
   $("start-session").addEventListener("click", startSession);
+  $("tab-progress").addEventListener("click", () => showTab("progress"));
+  $("tab-graph").addEventListener("click", () => showTab("graph"));
   $("end-session").addEventListener("click", endSession);
   $("transcript").addEventListener("input", updateWordCount);
   $("transcript").addEventListener("keydown", (e) => {

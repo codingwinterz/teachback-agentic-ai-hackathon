@@ -13,6 +13,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* class rules like .prompt { display: block } must not beat hidden */
 
 body {
   margin: 0;
@@ -230,6 +231,37 @@ button.quiet { background: transparent; color: var(--ink); border: 1px solid var
 .check-feedback { margin: 0.75rem 0 0; font-weight: 700; }
 .check-feedback.right { color: var(--sage); }
 .check-feedback.wrong { color: var(--alert); }
+
+/* ---------- dashboard tabs + graph ---------- */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.tabs { display: flex; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--rule); }
+.tabs button {
+  font: 700 0.95rem var(--ui);
+  color: var(--pencil);
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  padding: 0.4rem 0.8rem;
+  margin-bottom: -1px;
+}
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.graph-wrap { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--rule); border-radius: 4px; background: var(--sheet); }
+.graph-wrap svg { display: block; }
+.graph-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; font-size: 0.8rem; color: var(--pencil); margin: 0 0 0.6rem; }
+.key { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 3px; margin-right: 0.15rem; vertical-align: -1px; }
+.key-untouched, .node.untouched rect { fill: #dfe6ec; background: #dfe6ec; }
+.key-low, .node.low rect { fill: #f0b7ae; background: #f0b7ae; }
+.key-mid, .node.mid rect { fill: var(--highlight); background: var(--highlight); }
+.key-high, .node.high rect { fill: #9fd1b5; background: #9fd1b5; }
+.node { cursor: pointer; }
+.node rect { stroke: #9aa9b6; stroke-width: 1; }
+.node text { font: 11px var(--ui); fill: var(--ink); pointer-events: none; }
+.node.selected rect { stroke: var(--ink); stroke-width: 2; }
+.node.current rect { stroke: #3a5bd9; stroke-width: 3; }
+.node:focus-visible rect { stroke: var(--ink); stroke-width: 3; }
+.edge { fill: none; stroke: #a9b6c2; stroke-width: 1.2; }
+.walk { fill: none; stroke: #3a5bd9; stroke-width: 2.5; stroke-dasharray: 6 4; }
 
 /* ---------- learner dashboard ---------- */
 .learner { align-self: start; position: sticky; top: 1rem; }
