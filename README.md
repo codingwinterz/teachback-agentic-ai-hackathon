@@ -9,7 +9,7 @@ learning fundamentals concepts, from supervised learning to backpropagation.
 
 - **Live demo:** https://teachback-ofyf.onrender.com (free Render instance: the first load can take
   a minute to wake up, and the database starts empty, so use **Load sample learner**)
-- **Demo video:** _link coming soon_ <!-- TODO: add the 3-minute demo video link -->
+- **Demo video:** (https://drive.google.com/file/d/11ECYcv2aVXUiGbouKn-Vz5DzTrb4eFcu/view?usp=sharing)
 
 
 
