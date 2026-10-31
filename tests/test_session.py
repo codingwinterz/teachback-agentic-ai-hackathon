@@ -200,6 +200,22 @@ def test_budget_counts_provider_retries_and_paces_calls(conn):
     assert budget.used() == 4  # 2 calls + 1 real retry each (skipped models don't count)
 
 
+def test_lesson_check_during_a_session_counts_against_its_budget(conn):
+    from app.agent import answer_lesson
+
+    _knows_roots(conn)
+    view = session.start_session(conn, FakeLLM())
+    result, view = session.answer_session(conn, FakeLLM(), view.id, WEAK_ANSWER)
+    assert result.lesson_id
+    before = view.call_count
+    llm = session.llm_for_lesson(conn, FakeLLM(), result.lesson_id)
+    answer_lesson(conn, llm, result.lesson_id, "it is not guaranteed")
+    assert session.session_view(conn, view.id).call_count == before + 1
+
+    session.end_by_user(conn, FakeLLM(), view.id)  # outside an active session: plain LLM, no budget
+    assert isinstance(session.llm_for_lesson(conn, FakeLLM(), result.lesson_id), FakeLLM)
+
+
 # ---------------------------------------------------------------- study plan
 
 

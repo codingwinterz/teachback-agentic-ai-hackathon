@@ -132,7 +132,8 @@ def get_session(session_id: int):
 def post_lesson_answer(lesson_id: int, req: LessonAnswerRequest):
     try:
         with attempt_lock:
-            return answer_lesson(conn, get_llm(), lesson_id, req.answer)
+            llm = session.llm_for_lesson(conn, get_llm(), lesson_id, **_session_budget())
+            return answer_lesson(conn, llm, lesson_id, req.answer)
     except KeyError as e:
         raise HTTPException(404, str(e))
     except AlreadyAnswered as e:

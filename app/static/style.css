@@ -87,6 +87,7 @@ select {
   max-width: 82rem;
   margin: 0 auto;
 }
+.layout > * { min-width: 0; } /* grid items default to min-width:auto, which lets the wide graph SVG stretch the page */
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .learner { position: static; }

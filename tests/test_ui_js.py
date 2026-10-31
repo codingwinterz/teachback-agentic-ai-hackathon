@@ -76,6 +76,7 @@ def test_friendly_error_messages():
         [409, "Session 3 is finished"],
         [500, "TypeError: boom"],
         [0, "Failed to fetch"],
+        [502, "This session used its 30 AI requests."],
     ]
     out = _run(["friendlyError"], f"{json.dumps(cases)}.map(([s, d]) => friendlyError(s, d))")
     assert "out of requests" in out[0]["message"] and out[0]["retry"]
@@ -84,6 +85,7 @@ def test_friendly_error_messages():
     assert out[3]["retry"] is False and "Reload" in out[3]["message"]
     assert out[4]["retry"] is False and "Start a new one" in out[4]["message"]
     assert out[5]["retry"] and out[6]["retry"] and "connection" in out[6]["message"]
+    assert out[7]["retry"] is False and "budget" in out[7]["message"]
     assert all("Error" not in o["message"] and "429" not in o["message"] for o in out)  # no raw errors
 
 

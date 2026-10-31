@@ -20,6 +20,9 @@ function friendlyError(status, detail = "") {
   if (status === 404) return { message: "That item no longer exists (the data may have been reset). Reload the page.", retry: false };
   if (status === 409) return { message: "This session has already ended. Start a new one.", retry: false };
   if (status === 502) {
+    if (/used its \d+ ai requests/.test(d)) {
+      return { message: "This session has used its AI request budget. End the session to see your study plan.", retry: false };
+    }
     if (/all models failed|429|quota|exhausted|resource/.test(d)) {
       return { message: "The free AI models are out of requests right now. Wait a minute and retry, or try later.", retry: true };
     }
@@ -184,6 +187,7 @@ async function loadSample() {
   if (!resp.ok) return demoMessage(data.detail ?? `Couldn't load sample data (status ${resp.status}).`, true);
   demoMessage(`Loaded a sample learner: ${data.concepts} concepts, ${data.attempts} sample attempts.`);
   await refreshState();
+  loadHistory($("concept").value);
 }
 
 let resetArmed = null;
@@ -213,6 +217,7 @@ async function resetProgress() {
   resetTrace();
   demoMessage("All progress deleted. Concepts are kept.");
   await refreshState();
+  loadHistory($("concept").value);
 }
 
 // ---------- prerequisite graph (plain SVG) ----------
@@ -520,7 +525,7 @@ async function submitCheck(event) {
       body: JSON.stringify({ answer }),
     });
     const data = await resp.json();
-    if (!resp.ok) throw new Error(data.detail ?? `status ${resp.status}`);
+    if (!resp.ok) throw new Error(friendlyError(resp.status, data.detail).message);
     feedback.textContent = data.correct
       ? `${data.feedback} Mastery now ${Math.round(data.state.mastery * 100)}%.`
       : `${data.feedback} Try again.`;
@@ -530,7 +535,7 @@ async function submitCheck(event) {
     await refreshState();
     button.disabled = data.correct;
   } catch (err) {
-    feedback.textContent = `Couldn't check the answer: ${err.message}`;
+    feedback.textContent = err.message;
     feedback.className = "check-feedback wrong";
     button.disabled = false;
   } finally {

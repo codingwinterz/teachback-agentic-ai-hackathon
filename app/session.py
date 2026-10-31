@@ -535,6 +535,17 @@ def start_session(conn: sqlite3.Connection, llm: LLM, on_event=None,
     return session_view(conn, session_id, max_calls)
 
 
+def llm_for_lesson(conn: sqlite3.Connection, llm: LLM, lesson_id: int,
+                   max_calls: int = config.SESSION_MAX_CALLS, min_interval_s: float = 0.0) -> LLM:
+    """A lesson check answered during an active session counts against that session's budget."""
+    row = conn.execute(
+        """SELECT s.id FROM lessons l JOIN session_steps st ON st.attempt_id = l.attempt_id
+           JOIN sessions s ON s.id = st.session_id WHERE l.id = ? AND s.status = 'active'""",
+        (lesson_id,),
+    ).fetchone()
+    return BudgetedLLM(llm, conn, row["id"], max_calls, min_interval_s) if row else llm
+
+
 def end_by_user(conn: sqlite3.Connection, llm: LLM, session_id: int, on_event=None,
                 max_calls: int = config.SESSION_MAX_CALLS, min_interval_s: float = 0.0) -> SessionView:
     view = session_view(conn, session_id, max_calls)
