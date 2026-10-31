@@ -1,4 +1,4 @@
-import json
+﻿import json
 from types import SimpleNamespace
 
 import httpx
@@ -7,6 +7,7 @@ from google.genai import errors
 
 from app import config, db, hedging
 from app.agent import run_attempt
+from app.fake_llm import FakeLLM
 from app.llm import GeminiLLM, LLMError, LLMResult
 from app.schemas import CleanResult, Decision, GradeResult, Misconception
 
@@ -26,7 +27,7 @@ def conn(tmp_path):
     return c
 
 
-class FakeLLM:
+class CannedLLM:
     """Returns canned outputs keyed by schema, so the loop runs without an API key."""
 
     def __init__(self):
@@ -81,7 +82,7 @@ def test_code_hedging_clean_text_is_zero():
 
 
 def test_core_loop_with_fake_llm(conn):
-    llm = FakeLLM()
+    llm = CannedLLM()
     result = run_attempt(conn, llm, "overfitting", MESSY)
 
     assert [c[0] for c in llm.calls] == ["CleanResult", "GradeResult", "Decision"]
@@ -245,7 +246,58 @@ def test_init_db_migrates_old_agent_log(tmp_path):
     assert {"model", "elapsed_s"} <= cols
 
 
-@pytest.mark.skipif(not config.GEMINI_API_KEY, reason="needs GEMINI_API_KEY")
+def test_dev_fake_llm_runs_messy_transcript_end_to_end(conn):
+    llm = FakeLLM()
+    result = run_attempt(conn, llm, "overfitting", MESSY)
+
+    assert any("noise in the training data" in c for c in result.clean.claims)
+    assert not any("too well" in c for c in result.clean.claims)  # self-correction resolved
+    assert len(result.clean.self_corrections) == 1
+    assert result.clean.hedging_score == hedging.code_hedging(MESSY).score
+    assert [m.evidence for m in result.grade.misconceptions] == ["Adding more data always fixes it."]
+    assert 1 <= len(result.grade.missing_points) <= 3
+    assert result.decision.action == "ask_followup" and result.decision.followup_question
+    assert {e["model"] for e in result.agent_log if e["tool_name"].startswith("llm.")} == {"fake-dev"}
+
+    # second attempt reuses the stored label, so the misconception count goes up
+    run_attempt(conn, llm, "overfitting", MESSY)
+    assert [tuple(r) for r in conn.execute("SELECT count FROM misconceptions")] == [(2,)]
+
+
+def test_dev_fake_llm_advances_on_a_strong_answer(conn):
+    strong = ("Overfitting is when a model learns the noise in the training data instead of the "
+              "underlying pattern. It shows low training error but high error on unseen validation "
+              "data. Causes include a model too complex for the data. Remedies include regularization, "
+              "early stopping, simpler models and more representative data.")
+    result = run_attempt(conn, FakeLLM(), "overfitting", strong)
+    assert result.grade.misconceptions == []
+    assert result.decision.action == "advance"
+    assert result.decision.target_concept_id == "bias_variance"
+
+
+def test_get_llm_defaults_to_fake_and_health_reports_it(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app import llm as llm_module
+    from app import main
+
+    monkeypatch.setattr(config, "LLM_MODE", "fake")
+    llm_module.get_llm.cache_clear()
+    assert isinstance(llm_module.get_llm(), FakeLLM)
+    llm_module.get_llm.cache_clear()
+
+    monkeypatch.setattr(main, "conn", db.connect(str(tmp_path / "api.db")))
+    with TestClient(main.app) as client:
+        assert client.get("/health").json()["llm_mode"] == "fake"
+        r = client.post("/attempt", json={"concept_id": "overfitting", "transcript": MESSY})
+        assert r.status_code == 200 and r.json()["decision"]["action"] == "ask_followup"
+    llm_module.get_llm.cache_clear()
+
+
+@pytest.mark.skipif(
+    config.LLM_MODE != "real" or not config.GEMINI_API_KEY,
+    reason="costs real quota: run with LLM_MODE=real (and GEMINI_API_KEY set)",
+)
 def test_core_loop_real_model(conn):
     from app.llm import get_llm
 

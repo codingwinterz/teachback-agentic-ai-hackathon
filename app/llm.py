@@ -228,7 +228,12 @@ class AnthropicLLM:
 
 @functools.cache
 def get_llm() -> LLM:
-    """One shared instance, so quota-exhaustion memory persists across requests."""
+    """One shared instance, so quota-exhaustion memory persists across requests.
+    Dev mode (default) returns the offline FakeLLM; set LLM_MODE=real for API calls."""
+    if config.LLM_MODE != "real":
+        from app.fake_llm import FakeLLM
+
+        return FakeLLM()
     if config.LLM_PROVIDER == "gemini":
         return GeminiLLM()
     if config.LLM_PROVIDER == "anthropic":

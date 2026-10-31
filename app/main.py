@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
-from app import db
+from app import config, db
 from app.agent import run_attempt
 from app.llm import LLMError, get_llm
 from app.schemas import AttemptRequest, AttemptResult
@@ -29,6 +29,17 @@ def post_attempt(req: AttemptRequest):
         raise HTTPException(404, str(e))
     except LLMError as e:
         raise HTTPException(502, str(e))
+
+
+@app.get("/health")
+def health():
+    """Which LLM is live, so the UI can show a FAKE badge in dev mode."""
+    real = config.LLM_MODE == "real"
+    return {
+        "llm_mode": "real" if real else "fake",
+        "provider": config.LLM_PROVIDER if real else None,
+        "model_chain": ([config.LLM_MODEL] + config.LLM_FALLBACK_MODELS) if real else ["fake-dev"],
+    }
 
 
 @app.get("/concepts")

@@ -60,3 +60,15 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - Found while testing: gemini-3.6-flash free tier = 20 requests/day; a daily-quota 429 says `retryDelay: 72629s` and the backoff slept on it (uncapped). Now a hint > 60s marks the model exhausted until then and falls through immediately; `get_llm()` is a shared instance so this persists across requests.
 
 **Observed (3 runs, all served by gemini-3.5-flash-lite after 3.6 quota ran out):** 3.57s / 3.79s / 3.97s total; mastery 0.344 / 0.306 / 0.389. Under the 15s target, so no clean+grade merge.
+
+### Model chain + dev mode
+**I decided**
+- Quota is now the scarce resource. Primary `gemini-3.5-flash-lite`, fallback `gemini-3.6-flash` then `gemini-3.8-flash`.
+- Spend one real attempt to confirm Flash-Lite still catches the misconception: it did ("thinks more data always fixes overfitting", same label as 3.6), and the self-corrected claim counted as correct. Mastery 0.317 (it merged two claims and used all 3 missing slots).
+- Develop against a fake LLM by default; real calls only for deliberate checks, recording, Demo Day.
+
+**AI generated (I approved)**
+- `LLM_MODE=fake|real` (default fake). `app/fake_llm.py` parses the real prompts and returns deterministic outputs (sentence claims, reversal handling, absolute words -> misconception, low-overlap reference bullets -> missing points, rule-based decision).
+- Real-model test now opt-in via `LLM_MODE=real` (before, any `pytest` with a key spent quota). `GET /health` reports the mode for a UI badge.
+
+**Still to do by me:** read per-model daily limits at aistudio.google.com/rate-limit (not in the public docs).
