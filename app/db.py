@@ -97,6 +97,9 @@ CREATE TABLE IF NOT EXISTS agent_log (
 MIGRATIONS = [
     ("agent_log", "model", "TEXT"),
     ("agent_log", "elapsed_s", "REAL"),
+    ("learner_state", "is_sample", "INTEGER NOT NULL DEFAULT 0"),
+    ("misconceptions", "is_sample", "INTEGER NOT NULL DEFAULT 0"),
+    ("attempts", "is_sample", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

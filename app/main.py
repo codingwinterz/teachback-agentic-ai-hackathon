@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import config, db, graph, session
+from app import config, db, demo, graph, session
 from app.agent import AlreadyAnswered, answer_lesson, run_attempt
 from app.llm import LLMError, get_llm
 from app.schemas import (
@@ -169,7 +169,26 @@ def get_concepts():
 def get_state():
     states = conn.execute("SELECT * FROM learner_state").fetchall()
     misc = conn.execute("SELECT * FROM misconceptions ORDER BY last_seen_at DESC").fetchall()
-    return {"learner_state": [dict(r) for r in states], "misconceptions": [dict(r) for r in misc]}
+    return {"learner_state": [dict(r) for r in states], "misconceptions": [dict(r) for r in misc],
+            "sample_loaded": demo.sample_loaded(conn)}
+
+
+@app.post("/demo/sample")
+def post_demo_sample():
+    """Fill a realistic sample learner (marked is_sample). No LLM calls."""
+    with attempt_lock:
+        try:
+            return demo.load_sample(conn)
+        except demo.RealDataPresent as e:
+            raise HTTPException(409, str(e))
+
+
+@app.post("/demo/reset")
+def post_demo_reset():
+    """Delete all learner and sample data. Concepts are kept. No LLM calls."""
+    with attempt_lock:
+        demo.reset_progress(conn)
+        return {"reset": True}
 
 
 @app.get("/log")

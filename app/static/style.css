@@ -232,6 +232,15 @@ button.quiet { background: transparent; color: var(--ink); border: 1px solid var
 .check-feedback.right { color: var(--sage); }
 .check-feedback.wrong { color: var(--alert); }
 
+/* ---------- demo tools ---------- */
+.badge.sample { color: var(--ink); background: var(--sheet); border-color: var(--pencil); border-style: dashed; }
+.demo-tools { margin-top: 2rem; padding-top: 1rem; border-top: 1px dashed var(--rule); }
+.demo-tools h2 { font-size: 0.95rem; margin-bottom: 0.25rem; }
+.demo-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+.demo-buttons button { font-size: 0.85rem; padding: 0.35rem 0.7rem; }
+button.danger { color: var(--alert); border-color: var(--alert); }
+button.danger.confirm { color: var(--sheet); background: var(--alert); }
+
 /* ---------- dashboard tabs + graph ---------- */
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .tabs { display: flex; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--rule); }

@@ -119,7 +119,55 @@ function renderMastery() {
 async function refreshState() {
   state = await getJSON("/state");
   renderMastery();
+  $("sample-badge").hidden = !state.sample_loaded;
   if (!$("panel-graph").hidden) await loadGraph();
+}
+
+// ---------- demo tools (no LLM calls) ----------
+
+function demoMessage(text, isError = false) {
+  const m = $("demo-message");
+  m.textContent = text;
+  m.className = `small ${isError ? "error" : "muted"}`;
+  m.hidden = false;
+}
+
+async function loadSample() {
+  if (busy) return;
+  const resp = await fetch("/demo/sample", { method: "POST" });
+  const data = await resp.json();
+  if (!resp.ok) return demoMessage(data.detail ?? `Couldn't load sample data (status ${resp.status}).`, true);
+  demoMessage(`Loaded a sample learner: ${data.concepts} concepts, ${data.attempts} sample attempts.`);
+  await refreshState();
+}
+
+let resetArmed = null;
+async function resetProgress() {
+  if (busy) return;
+  const button = $("reset-progress");
+  if (!resetArmed) { // first click arms it; a second click within 4s resets
+    button.textContent = "Click again to reset";
+    button.classList.add("confirm");
+    resetArmed = setTimeout(() => {
+      resetArmed = null;
+      button.textContent = "Reset progress";
+      button.classList.remove("confirm");
+    }, 4000);
+    return;
+  }
+  clearTimeout(resetArmed);
+  resetArmed = null;
+  button.textContent = "Reset progress";
+  button.classList.remove("confirm");
+  const resp = await fetch("/demo/reset", { method: "POST" });
+  if (!resp.ok) return demoMessage(`Couldn't reset (status ${resp.status}).`, true);
+  activeSession = lastSession = null;
+  renderSession({ status: "finished", steps: [], call_count: 0, max_calls: 0, message: null });
+  $("session-status").textContent = "";
+  $("result").hidden = $("lesson").hidden = true;
+  resetTrace();
+  demoMessage("All progress deleted. Concepts are kept.");
+  await refreshState();
 }
 
 // ---------- prerequisite graph (plain SVG) ----------
@@ -572,6 +620,8 @@ async function boot() {
   $("attempt-form").addEventListener("submit", submitAttempt);
   $("check-form").addEventListener("submit", submitCheck);
   $("start-session").addEventListener("click", startSession);
+  $("load-sample").addEventListener("click", loadSample);
+  $("reset-progress").addEventListener("click", resetProgress);
   $("tab-progress").addEventListener("click", () => showTab("progress"));
   $("tab-graph").addEventListener("click", () => showTab("graph"));
   $("end-session").addEventListener("click", endSession);
