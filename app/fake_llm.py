@@ -6,6 +6,7 @@ outputs, so the whole loop and UI can be developed without spending requests.
 
 import json
 import re
+import time
 
 from pydantic import BaseModel
 
@@ -101,9 +102,16 @@ def _decide(user: str) -> Decision:
 class FakeLLM:
     model = "fake-dev"
 
+    def __init__(self, delay_s: float = 0.0):
+        self.delay_s = delay_s  # simulated latency so the UI trace visibly steps through
+
     def structured(self, system: str, user: str, schema: type[BaseModel], thinking: str | None = None) -> LLMResult:
         handlers = {CleanResult: _clean, GradeResult: _grade, Decision: _decide}
         if schema not in handlers:
             raise ValueError(f"FakeLLM has no handler for {schema.__name__}")
+        start = time.perf_counter()
+        time.sleep(self.delay_s)
         out = handlers[schema](user)
-        return LLMResult(parsed=out, raw_text=out.model_dump_json(), model=self.model)
+        elapsed = round(time.perf_counter() - start, 2)
+        return LLMResult(parsed=out, raw_text=out.model_dump_json(), model=self.model,
+                         elapsed_s=elapsed, last_call_s=elapsed)

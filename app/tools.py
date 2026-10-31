@@ -3,14 +3,20 @@
 import json
 import sqlite3
 import time
+from typing import Callable
 
 from app.schemas import Concept, LearnerState, Misconception
 
 
 class AgentLogger:
-    def __init__(self, conn: sqlite3.Connection, run_id: str):
+    def __init__(
+        self, conn: sqlite3.Connection, run_id: str,
+        on_event: Callable[[dict], None] | None = None,
+    ):
         self.conn = conn
         self.run_id = run_id
+        self.on_event = on_event or (lambda event: None)  # live trace for the UI
+        self.step_models: dict[str, str] = {}
 
     def log(
         self, step: str, tool_name: str, args: dict, result,
@@ -23,6 +29,18 @@ class AgentLogger:
              json.dumps(result, default=str), model, elapsed_s),
         )
         self.conn.commit()
+        if model:
+            self.step_models[step] = model
+        self.on_event({"type": "tool", "step": step, "tool_name": tool_name,
+                       "model": model, "elapsed_s": elapsed_s})
+
+    def step_start(self, step: str) -> None:
+        self.on_event({"type": "step_start", "step": step})
+
+    def step_done(self, step: str) -> None:
+        self.on_event({"type": "step_done", "step": step,
+                       "model": self.step_models.get(step, "code"),
+                       "elapsed_s": self.step_timings().get(step, 0.0)})
 
     def step_timings(self) -> dict:
         """Seconds per step for this run, summed over its log entries."""

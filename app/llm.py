@@ -233,7 +233,7 @@ def get_llm() -> LLM:
     if config.LLM_MODE != "real":
         from app.fake_llm import FakeLLM
 
-        return FakeLLM()
+        return FakeLLM(delay_s=config.FAKE_LLM_DELAY_S)
     if config.LLM_PROVIDER == "gemini":
         return GeminiLLM()
     if config.LLM_PROVIDER == "anthropic":

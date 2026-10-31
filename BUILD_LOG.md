@@ -84,3 +84,12 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - Prerequisite DAG; kept the overfitting -> bias_variance -> regularization chain, and added overfitting <- train_test_split and regularization <- linear_regression.
 - 6-8 bullet reference notes each, most ending in a "Common confusion" bullet so the grader has explicit misconceptions to match.
 - Content tests: size, unique ids, prerequisites exist, no cycles, bullet format, idempotent re-seed that keeps learner progress, and the fake-LLM loop on every concept.
+
+## Step 3: UI + dashboard (fake mode only, no real calls)
+**I decided:** single page, vanilla HTML/JS, no build step: concept picker, very large dictation textarea focused on load, live trace of clean/grade/update/decide with model + seconds, result panel (claims, correct, missing, misconceptions with counts, next action + follow-up), mastery bar per concept, open misconceptions, fake/real badge from /health.
+
+**AI generated (I approved):**
+- `POST /attempt/stream` (server-sent events): the agent emits step_start / tool / step_done events through an `on_event` hook on AgentLogger; a lock keeps one attempt at a time on the shared SQLite connection.
+- `FAKE_LLM_DELAY_S` (0.6s per fake call, server only) so the trace visibly steps through in dev mode.
+- Design: ruled-notebook dictation sheet (Literata) as the hero, Atkinson Hyperlegible for UI, highlighter yellow for misconceptions, sage for correct.
+- Found in browser testing: a repeated Ctrl+Enter started a second attempt (3 recorded for 2 submits); in real mode that spends quota twice. Added a busy guard + ignore key repeat; verified 3 rapid submits -> 1 attempt.

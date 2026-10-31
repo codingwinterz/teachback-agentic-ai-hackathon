@@ -6,6 +6,7 @@ load_dotenv()
 
 # "fake" (default): offline FakeLLM, no API calls. "real": call LLM_PROVIDER.
 LLM_MODE = os.getenv("LLM_MODE", "fake").strip().lower()
+FAKE_LLM_DELAY_S = float(os.getenv("FAKE_LLM_DELAY_S", "0.6"))  # per fake call, for a visible trace
 
 DEFAULT_MODELS ={"gemini": "gemini-3.5-flash-lite", "anthropic": "claude-opus-5-5"}
 

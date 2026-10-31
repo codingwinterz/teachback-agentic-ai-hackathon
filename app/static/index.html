@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TeachBack</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1 class="brand">TeachBack</h1>
+    <label class="picker">
+      <span>Concept</span>
+      <select id="concept"></select>
+    </label>
+    <span id="badge" class="badge" title="Which language model is answering">…</span>
+  </header>
+
+  <main class="layout">
+    <section class="work">
+      <form id="attempt-form" class="dictation">
+        <label for="transcript" class="prompt">
+          Explain <strong id="concept-name">this concept</strong> out loud, as if teaching a friend.
+        </label>
+        <p id="prereqs" class="prereqs"></p>
+        <textarea id="transcript" autofocus spellcheck="false"
+          placeholder="Start dictating. Ums, restarts and “no wait” corrections are fine."></textarea>
+        <div class="actions">
+          <span id="wordcount" class="muted">0 words</span>
+          <span class="muted kbd-hint">Ctrl + Enter</span>
+          <button id="submit" type="submit">Check my explanation</button>
+        </div>
+      </form>
+
+      <section class="trace" aria-labelledby="trace-title">
+        <h2 id="trace-title">What the tutor is doing</h2>
+        <ol id="steps" class="steps" aria-live="polite"></ol>
+        <p id="trace-error" class="error" role="alert" hidden></p>
+      </section>
+
+      <section id="result" class="result" aria-live="polite" hidden>
+        <div id="next" class="next"></div>
+        <div class="columns">
+          <div>
+            <h3>What you said</h3>
+            <ul id="claims" class="claims"></ul>
+            <p id="corrections" class="muted small"></p>
+            <p id="hedging" class="muted small"></p>
+          </div>
+          <div>
+            <h3>Correct</h3>
+            <ul id="correct" class="marks correct"></ul>
+            <h3>Missing</h3>
+            <ul id="missing" class="marks missing"></ul>
+            <h3>Misconceptions</h3>
+            <ul id="misconceptions" class="marks wrong"></ul>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="learner" aria-labelledby="learner-title">
+      <h2 id="learner-title">Your progress</h2>
+      <ul id="mastery" class="mastery"></ul>
+      <h2>Open misconceptions</h2>
+      <ul id="open-misconceptions" class="open-misc"></ul>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

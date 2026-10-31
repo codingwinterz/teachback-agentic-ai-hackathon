@@ -4,7 +4,7 @@ import json
 import sqlite3
 import time
 import uuid
-from typing import Protocol
+from typing import Callable, Protocol
 
 from app import hedging, prompts, scoring, tools
 from app.llm import LLM, LLMResult
@@ -55,13 +55,16 @@ def run_attempt(
     concept_id: str,
     transcript: str,
     decider: Decider | None = None,
+    on_event: Callable[[dict], None] | None = None,
 ) -> AttemptResult:
+    """on_event receives step_start / tool / step_done dicts as the loop runs (live UI trace)."""
     run_start = time.perf_counter()
     decider = decider or SingleShotDecider(llm)
-    log = tools.AgentLogger(conn, uuid.uuid4().hex[:8])
+    log = tools.AgentLogger(conn, uuid.uuid4().hex[:8], on_event=on_event)
     concept = tools.get_concept(conn, log, concept_id)
 
     # 1. CLEAN
+    log.step_start("clean")
     out = llm.structured(
         prompts.CLEAN_SYSTEM,
         prompts.CLEAN_USER.format(concept_name=concept.name, transcript=transcript),
@@ -77,8 +80,10 @@ def run_attempt(
     hedge_info = {"llm": clean.hedging_score, "code": counts.model_dump(), "blended": hedge}
     log.log("clean", "hedging.blend", {"llm_score": clean.hedging_score}, hedge_info,
             elapsed_s=round(time.perf_counter() - start, 4))
+    log.step_done("clean")
 
     # 2. GRADE
+    log.step_start("grade")
     known = tools.get_open_misconceptions(conn, concept_id)
     out = llm.structured(
         prompts.GRADE_SYSTEM,
@@ -92,8 +97,10 @@ def run_attempt(
     )
     grade: GradeResult = out.parsed
     _log_llm(log, "grade", "llm.grade", {"claims": len(clean.claims), "known_labels": known}, out)
+    log.step_done("grade")
 
     # 3. UPDATE
+    log.step_start("update")
     prior = tools.get_learner_state(conn, log, concept_id, step="update")
     score = scoring.attempt_score(grade, hedge)
     state = tools.update_learner_state(
@@ -102,8 +109,10 @@ def run_attempt(
         confidence=scoring.next_confidence(prior.confidence, prior.attempts_count, hedge),
         misconceptions=grade.misconceptions,
     )
+    log.step_done("update")
 
     # 4. DECIDE
+    log.step_start("decide")
     ctx = DecisionContext(
         concept=concept,
         grade=grade,
@@ -116,6 +125,7 @@ def run_attempt(
         next_concept_ids=tools.get_dependent_concepts(conn, concept_id),
     )
     decision = decider.decide(ctx, log)
+    log.step_done("decide")
 
     cur = conn.execute(
         """INSERT INTO attempts (concept_id, raw_transcript, clean_claims_json, hedging_score,

@@ -306,15 +306,35 @@ def test_get_llm_defaults_to_fake_and_health_reports_it(monkeypatch, tmp_path):
     from app import main
 
     monkeypatch.setattr(config, "LLM_MODE", "fake")
+    monkeypatch.setattr(config, "FAKE_LLM_DELAY_S", 0.0)
     llm_module.get_llm.cache_clear()
     assert isinstance(llm_module.get_llm(), FakeLLM)
-    llm_module.get_llm.cache_clear()
 
     monkeypatch.setattr(main, "conn", db.connect(str(tmp_path / "api.db")))
     with TestClient(main.app) as client:
         assert client.get("/health").json()["llm_mode"] == "fake"
         r = client.post("/attempt", json={"concept_id": "overfitting", "transcript": MESSY})
         assert r.status_code == 200 and r.json()["decision"]["action"] == "ask_followup"
+
+        # streaming endpoint: step events arrive in order, then the full result
+        with client.stream("POST", "/attempt/stream",
+                           json={"concept_id": "overfitting", "transcript": MESSY}) as s:
+            events = [json.loads(line[6:]) for line in s.iter_lines() if line.startswith("data: ")]
+        steps = [(e["type"], e["step"]) for e in events if e["type"] in ("step_start", "step_done")]
+        assert steps == [(t, s) for s in ("clean", "grade", "update", "decide")
+                         for t in ("step_start", "step_done")]
+        done = {e["step"]: e for e in events if e["type"] == "step_done"}
+        assert done["clean"]["model"] == "fake-dev" and done["update"]["model"] == "code"
+        assert events[-1]["type"] == "result"
+        assert events[-1]["data"]["state"]["attempts_count"] == 2
+
+        bad = client.post("/attempt/stream", json={"concept_id": "nope", "transcript": "x"})
+        assert '"type": "error"' in bad.text and '"status": 404' in bad.text
+
+        # the single-page UI is served at /
+        page = client.get("/")
+        assert page.status_code == 200 and 'id="transcript"' in page.text and "autofocus" in page.text
+        assert client.get("/app.js").status_code == 200
     llm_module.get_llm.cache_clear()
 
 
