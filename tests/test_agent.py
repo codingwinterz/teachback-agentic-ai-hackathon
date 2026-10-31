@@ -216,6 +216,30 @@ def test_gemini_daily_quota_skips_model_without_sleeping():
     assert second.failed_attempts == [{"model": "primary", "status": "skipped_exhausted", "call_s": 0.0}]
 
 
+CHAIN = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash"]
+
+
+def test_default_model_chain_order():
+    assert [config.DEFAULT_MODELS["gemini"]] + config.DEFAULT_FALLBACK_MODELS.split(",") == CHAIN
+
+
+def test_full_chain_skips_every_exhausted_model_on_later_calls():
+    def daily():
+        return errors.ClientError(429, {"error": {"code": 429, "message": "quota",
+                                                  "details": [{"retryDelay": "72629s"}]}})
+
+    ok = Decision(action="advance", reason="Solid.").model_dump_json()
+    client = FakeGeminiClient([daily(), daily(), daily(), _gemini_response(ok), _gemini_response(ok)])
+    llm = GeminiLLM(model=CHAIN[0], client=client, sleep=lambda s: None, fallback_models=CHAIN[1:])
+
+    first = llm.structured("s", "u", Decision)
+    second = llm.structured("s", "u", Decision)
+
+    assert client.called_models == CHAIN + ["gemini-3.8-flash"]  # 2nd call: one request only
+    assert first.model == second.model == "gemini-3.8-flash"
+    assert [f["status"] for f in second.failed_attempts] == ["skipped_exhausted"] * 3
+
+
 def test_gemini_does_not_fall_back_on_client_errors():
     client = FakeGeminiClient([errors.ClientError(400, {"error": {"code": 400, "message": "bad schema"}})])
     llm = GeminiLLM(model="primary", client=client, sleep=lambda s: None, fallback_models=["backup"])

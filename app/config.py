@@ -12,9 +12,11 @@ DEFAULT_MODELS ={"gemini": "gemini-3.5-flash-lite", "anthropic": "claude-opus-5-
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
 LLM_MODEL = os.getenv("LLM_MODEL") or DEFAULT_MODELS.get(LLM_PROVIDER, "")
 # Comma-separated models tried in order when the primary stays overloaded/rate-limited.
+# Lite models first; 3.6/3.8 Flash last since their free tier is ~20 requests/day.
+DEFAULT_FALLBACK_MODELS = "gemini-3.1-flash-lite,gemini-3.6-flash,gemini-3.8-flash"
 LLM_FALLBACK_MODELS = [
     m.strip()
-    for m in os.getenv("LLM_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.8-flash").split(",")
+    for m in os.getenv("LLM_FALLBACK_MODELS", DEFAULT_FALLBACK_MODELS).split(",")
     if m.strip()
 ]
 LLM_EFFORT = os.getenv("LLM_EFFORT", "medium")  # anthropic only
