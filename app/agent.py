@@ -113,6 +113,7 @@ def run_attempt(
         mastery=scoring.next_mastery(prior.mastery, prior.attempts_count, score),
         confidence=scoring.next_confidence(prior.confidence, prior.attempts_count, hedge),
         misconceptions=grade.misconceptions,
+        schedule=scoring.schedule_review(prior.interval_days, prior.ease, score),
     )
     log.step_done("update")
 

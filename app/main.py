@@ -153,6 +153,12 @@ def health():
     }
 
 
+@app.get("/reviews/due")
+def get_due_reviews():
+    """Concepts whose next review time has passed (same data the session's list_due_reviews tool reads)."""
+    return session.list_due_reviews(conn)
+
+
 @app.get("/graph")
 def get_graph():
     """Nodes (depth/row layout + mastery) and prerequisite edges for the SVG graph view."""

@@ -45,6 +45,12 @@ def test_split_label_wraps_long_names_to_two_lines():
     assert len(out[3]) == 1  # a single unbreakable word stays on one line
 
 
+def test_due_text():
+    now = 'new Date("2026-10-31T12:00:00Z")'
+    assert _run(["dueText"], f'["2026-10-31 08:00:00", "2026-10-30 11:00:00", "2026-10-28 12:00:00"].map((d) => dueText(d, {now}))') == \
+        ["due today", "overdue by 1 day", "overdue by 3 days"]
+
+
 def test_tool_label_formats_args():
     assert _run(["toolLabel"], 'toolLabel("tool.pick_next_concept", {strategy: "due"})') == \
         "pick_next_concept(strategy=due)"

@@ -169,6 +169,7 @@ def update_learner_state(
     mastery: float,
     confidence: float,
     misconceptions: list[Misconception],
+    schedule: tuple[float, float, str] | None = None,  # (interval_days, ease, next_review_at)
 ) -> LearnerState:
     start = time.perf_counter()
     conn.execute(
@@ -176,6 +177,11 @@ def update_learner_state(
            WHERE concept_id = ?""",
         (mastery, confidence, concept_id),
     )
+    if schedule:
+        conn.execute(
+            "UPDATE learner_state SET interval_days = ?, ease = ?, next_review_at = ? WHERE concept_id = ?",
+            (*schedule, concept_id),
+        )
     for m in misconceptions:
         conn.execute(
             """INSERT INTO misconceptions (concept_id, label) VALUES (?, ?)
@@ -189,7 +195,8 @@ def update_learner_state(
     log.log(
         "update", "update_learner_state",
         {"concept_id": concept_id, "mastery": mastery, "confidence": confidence,
-         "misconceptions": [m.label for m in misconceptions]},
+         "misconceptions": [m.label for m in misconceptions],
+         **({"next_review_in_days": schedule[0]} if schedule else {})},
         state.model_dump(),
         elapsed_s=_since(start),
     )

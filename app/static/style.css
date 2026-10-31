@@ -232,6 +232,12 @@ button.quiet { background: transparent; color: var(--ink); border: 1px solid var
 .check-feedback.right { color: var(--sage); }
 .check-feedback.wrong { color: var(--alert); }
 
+/* ---------- review today ---------- */
+.due-list { margin-bottom: 1.5rem; }
+.due-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px dotted var(--rule); font-size: 0.9rem; }
+.due-list .when { display: block; color: var(--pencil); font-size: 0.78rem; }
+.due-list button { margin-left: auto; font-size: 0.8rem; padding: 0.25rem 0.6rem; }
+
 /* ---------- demo tools ---------- */
 .badge.sample { color: var(--ink); background: var(--sheet); border-color: var(--pencil); border-style: dashed; }
 .demo-tools { margin-top: 2rem; padding-top: 1rem; border-top: 1px dashed var(--rule); }

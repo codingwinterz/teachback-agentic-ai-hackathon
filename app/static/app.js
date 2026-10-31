@@ -116,8 +116,30 @@ function renderMastery() {
     ), "No open misconceptions. Ones the tutor spots collect here until a lesson check clears them.");
 }
 
+// "2026-10-30 09:00:00" (UTC) -> "overdue by 2 days" / "due today"
+function dueText(nextReviewAt, now = new Date()) {
+  const due = new Date(`${nextReviewAt.replace(" ", "T")}Z`);
+  const days = Math.floor((now - due) / 86400000);
+  if (days <= 0) return "due today";
+  return `overdue by ${days} day${days === 1 ? "" : "s"}`;
+}
+
+function renderDue(due) {
+  fillList($("due-reviews"), due, (d) =>
+    el("li", {},
+      el("span", {}, d.name, el("span", { class: "when" }, `${dueText(d.next_review_at)} · mastery ${Math.round(d.mastery * 100)}%`)),
+      el("button", {
+        type: "button", class: "quiet", disabled: activeSession ? "" : null,
+        onclick: () => { if (!activeSession) selectConcept(d.concept_id); },
+      }, "Start")
+    ), "Nothing due. Good attempts push the next review further out.");
+  for (const b of $("due-reviews").querySelectorAll("button")) b.disabled = Boolean(activeSession);
+}
+
 async function refreshState() {
-  state = await getJSON("/state");
+  const [s, due] = await Promise.all([getJSON("/state"), getJSON("/reviews/due")]);
+  state = s;
+  renderDue(due);
   renderMastery();
   $("sample-badge").hidden = !state.sample_loaded;
   if (!$("panel-graph").hidden) await loadGraph();
