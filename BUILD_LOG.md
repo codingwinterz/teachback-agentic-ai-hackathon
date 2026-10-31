@@ -72,3 +72,15 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - Real-model test now opt-in via `LLM_MODE=real` (before, any `pytest` with a key spent quota). `GET /health` reports the mode for a UI badge.
 
 **Still to do by me:** read per-model daily limits at aistudio.google.com/rate-limit (not in the public docs).
+
+### Fallback chain reorder
+**I decided:** gemini-3.5-flash-lite -> gemini-3.1-flash-lite -> gemini-3.6-flash -> gemini-3.8-flash (3.6/3.8 last: out of daily quota). Keep exhausted-model skipping.
+
+## Step 2: Content (18 concepts)
+**I decided:** one subject (ML fundamentals), 15-20 concepts, short reference notes, prerequisite links, seeded from JSON; no real model calls while building it.
+
+**AI generated (needs my review for accuracy):**
+- 18 concepts: supervised learning, train/val/test split, loss function, gradient descent, linear regression, logistic regression, overfitting, bias-variance, regularization, cross-validation, classification metrics, feature scaling, decision trees, bagging/random forests, boosting, k-means, neural networks, backpropagation.
+- Prerequisite DAG; kept the overfitting -> bias_variance -> regularization chain, and added overfitting <- train_test_split and regularization <- linear_regression.
+- 6-8 bullet reference notes each, most ending in a "Common confusion" bullet so the grader has explicit misconceptions to match.
+- Content tests: size, unique ids, prerequisites exist, no cycles, bullet format, idempotent re-seed that keeps learner progress, and the fake-LLM loop on every concept.

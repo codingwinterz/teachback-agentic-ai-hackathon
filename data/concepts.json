@@ -1,9 +1,51 @@
 [
   {
+    "id": "supervised_learning",
+    "name": "Supervised Learning",
+    "subject": "ML Fundamentals",
+    "prerequisites": [],
+    "reference_notes": "- Supervised learning learns a mapping from inputs (features) to outputs (labels) using examples where the correct answer is known.\n- Regression predicts a continuous value (e.g. house price); classification predicts a category (e.g. spam or not spam).\n- Training means adjusting model parameters so predictions match the labels on the training data.\n- The real goal is generalization: good predictions on new, unseen examples, not just the training set.\n- It needs labeled data, which is often the expensive part.\n- Unsupervised learning, by contrast, has no labels and looks for structure (e.g. clusters).\n- Common confusion: supervised does not mean a human supervises training; it means the training data has labels."
+  },
+  {
+    "id": "train_test_split",
+    "name": "Train / Validation / Test Split",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["supervised_learning"],
+    "reference_notes": "- Data is split so the model is evaluated on examples it never saw during training.\n- Training set: used to fit model parameters.\n- Validation set: used to compare models and tune hyperparameters.\n- Test set: used once at the end for an unbiased estimate of real-world performance.\n- Typical splits are around 70/15/15 or 80/10/10; random shuffling (or stratification for classification) keeps the splits representative.\n- For time-series data, split by time so the model never trains on the future.\n- Data leakage: information from the test set (or the future) leaking into training makes scores look better than they really are.\n- Common confusion: tuning on the test set turns it into a validation set and its score is no longer an honest estimate."
+  },
+  {
+    "id": "loss_function",
+    "name": "Loss Function",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["supervised_learning"],
+    "reference_notes": "- A loss function measures how wrong a model's prediction is for an example; training minimizes the average loss.\n- Mean squared error (MSE) is common for regression; it squares errors so large errors are punished heavily.\n- Mean absolute error (MAE) is less sensitive to outliers than MSE.\n- Cross-entropy (log loss) is standard for classification; it heavily penalizes confident wrong predictions.\n- The loss used for training is not always the metric you report (e.g. train with cross-entropy, report accuracy).\n- The loss must be differentiable (or nearly) for gradient-based training.\n- Common confusion: a lower training loss does not guarantee better test performance; that is overfitting."
+  },
+  {
+    "id": "gradient_descent",
+    "name": "Gradient Descent",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["loss_function"],
+    "reference_notes": "- Gradient descent minimizes a loss by repeatedly moving parameters a small step in the direction of the negative gradient (steepest decrease).\n- The learning rate sets the step size: too large overshoots or diverges, too small converges very slowly.\n- Batch gradient descent uses all data per step; stochastic (SGD) uses one example; mini-batch uses a small batch and is the usual choice.\n- SGD's noise can help escape shallow local minima and saddle points, at the cost of a noisier path.\n- For convex losses (e.g. linear regression with MSE) it reaches the global minimum; for non-convex losses (neural networks) it may find a local minimum.\n- Features on very different scales make convergence slow, which is why feature scaling helps.\n- Common confusion: the gradient points uphill; we subtract it to go downhill."
+  },
+  {
+    "id": "linear_regression",
+    "name": "Linear Regression",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["loss_function", "gradient_descent"],
+    "reference_notes": "- Linear regression predicts a continuous target as a weighted sum of features plus an intercept: y = w1*x1 + ... + wn*xn + b.\n- It is usually fit by minimizing mean squared error, either with gradient descent or the closed-form normal equation.\n- Each weight is the expected change in the prediction for a one-unit change in that feature, holding others fixed.\n- Assumes a roughly linear relationship; it can model curves by adding transformed features (e.g. x squared), which is still linear in the weights.\n- Sensitive to outliers because MSE squares errors.\n- Highly correlated features (multicollinearity) make individual weights unstable and hard to interpret.\n- Common confusion: 'linear' refers to linearity in the parameters, not that only straight lines can be modeled."
+  },
+  {
+    "id": "logistic_regression",
+    "name": "Logistic Regression",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["linear_regression"],
+    "reference_notes": "- Logistic regression is a classification model despite its name.\n- It computes a linear score and passes it through the sigmoid function to get a probability between 0 and 1.\n- A threshold (often 0.5) turns the probability into a class; the threshold can be moved to trade precision against recall.\n- It is trained by minimizing cross-entropy (log loss), not mean squared error.\n- Its decision boundary is linear in the features.\n- Weights relate to log-odds: increasing a feature by one unit changes the log-odds by its weight.\n- Extends to multiple classes with softmax (multinomial logistic regression).\n- Common confusion: it does not output a hard class directly, and it is not a regression model for continuous targets."
+  },
+  {
     "id": "overfitting",
     "name": "Overfitting",
     "subject": "ML Fundamentals",
-    "prerequisites": [],
+    "prerequisites": ["train_test_split"],
     "reference_notes": "- Overfitting is when a model learns the noise and random quirks of the training data instead of the underlying pattern.\n- Symptom: low training error but high error on unseen (validation/test) data, i.e. a large generalization gap.\n- Causes: model too complex/flexible for the amount of data, too many parameters, training too long, too little or unrepresentative data.\n- Detection: compare training vs validation performance; validation error rising while training error keeps falling.\n- Remedies: more (representative) data, simpler model, regularization, early stopping, cross-validation for model selection, data augmentation.\n- More data usually helps but is not guaranteed to fix it, especially if the model is extremely flexible or the new data is noisy or unrepresentative.\n- Underfitting is the opposite: model too simple, high error on both training and test data."
   },
   {
@@ -17,7 +59,70 @@
     "id": "regularization",
     "name": "Regularization",
     "subject": "ML Fundamentals",
-    "prerequisites": ["bias_variance"],
+    "prerequisites": ["bias_variance", "linear_regression"],
     "reference_notes": "- Regularization adds a penalty on model complexity to the training objective to reduce overfitting (variance), usually at the cost of a little extra bias.\n- L2 (ridge / weight decay): penalizes the sum of squared weights; shrinks weights smoothly toward zero but rarely to exactly zero.\n- L1 (lasso): penalizes the sum of absolute weights; drives some weights to exactly zero, giving sparse models and implicit feature selection.\n- The strength is a hyperparameter (lambda/alpha) chosen with validation or cross-validation; too large causes underfitting, too small does little.\n- Features should be on comparable scales because the penalty depends on weight magnitude.\n- Other forms: dropout, early stopping, data augmentation act as regularizers.\n- Regularization is applied during training; it does not change the data and is not a post-training step."
+  },
+  {
+    "id": "cross_validation",
+    "name": "Cross-Validation",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["train_test_split", "overfitting"],
+    "reference_notes": "- K-fold cross-validation splits the training data into k folds, trains k times, each time validating on a different fold, and averages the scores.\n- It gives a more reliable performance estimate than a single validation split, especially with small datasets, and shows the variance of the estimate.\n- Common choices are k = 5 or 10; leave-one-out uses k = number of examples and is expensive.\n- Stratified k-fold keeps class proportions the same in each fold; time-series data needs forward-chaining splits instead of random folds.\n- Used for model selection and hyperparameter tuning; the final test set is still kept separate.\n- Preprocessing such as scaling must be fit inside each fold to avoid leakage.\n- Common confusion: cross-validation evaluates a modeling approach; it does not itself make the model better or prevent overfitting."
+  },
+  {
+    "id": "classification_metrics",
+    "name": "Classification Metrics",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["logistic_regression", "train_test_split"],
+    "reference_notes": "- Accuracy is the fraction of correct predictions; it is misleading on imbalanced data (99% accuracy by always predicting the majority class).\n- Precision = TP / (TP + FP): of the predicted positives, how many were right.\n- Recall (sensitivity) = TP / (TP + FN): of the actual positives, how many were found.\n- F1 is the harmonic mean of precision and recall, useful when you need a balance between them.\n- Moving the decision threshold trades precision against recall; which matters more depends on the cost of false positives vs false negatives.\n- The confusion matrix shows TP, FP, TN, FN counts.\n- ROC-AUC measures ranking quality across all thresholds; precision-recall curves are more informative for heavy class imbalance.\n- Common confusion: precision and recall are often swapped; recall is about the positives you missed."
+  },
+  {
+    "id": "feature_scaling",
+    "name": "Feature Scaling",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["gradient_descent"],
+    "reference_notes": "- Feature scaling puts features on comparable ranges.\n- Standardization subtracts the mean and divides by the standard deviation (zero mean, unit variance).\n- Min-max normalization rescales to a fixed range, usually 0 to 1; it is sensitive to outliers.\n- It speeds up and stabilizes gradient descent, because unscaled features create long, narrow loss valleys.\n- Distance-based methods (k-means, k-nearest neighbors) and regularized models depend on scale and need it.\n- Tree-based models (decision trees, random forests, boosting) are largely unaffected by scaling.\n- The scaler must be fit on training data only and then applied to validation/test data, to avoid leakage.\n- Common confusion: scaling changes the units of features, not the information they contain or the shape of their distribution."
+  },
+  {
+    "id": "decision_trees",
+    "name": "Decision Trees",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["supervised_learning", "overfitting"],
+    "reference_notes": "- A decision tree makes predictions by asking a sequence of feature-based yes/no questions, from the root to a leaf.\n- Each split is chosen to make the child nodes purer, measured by Gini impurity or entropy (information gain) for classification, or variance reduction for regression.\n- Trees handle non-linear relationships and feature interactions and need no feature scaling.\n- They are easy to interpret for small depths.\n- Deep, unpruned trees overfit badly: they can memorize the training data (high variance).\n- Controls: maximum depth, minimum samples per leaf, pruning.\n- Small changes in the data can produce a very different tree, which is why ensembles of trees are often used.\n- Common confusion: a tree that fits training data perfectly is usually overfit, not excellent."
+  },
+  {
+    "id": "ensemble_methods",
+    "name": "Bagging and Random Forests",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["decision_trees", "bias_variance"],
+    "reference_notes": "- Ensembles combine many models so their errors partly cancel out.\n- Bagging (bootstrap aggregating) trains each model on a random sample of the data drawn with replacement and averages (regression) or votes (classification).\n- Bagging mainly reduces variance; it works best with high-variance base models like deep trees.\n- A random forest is bagged decision trees that also consider only a random subset of features at each split, which makes the trees less correlated.\n- Out-of-bag examples (not drawn for a given tree) give a built-in validation estimate.\n- Random forests are robust defaults with little tuning, but are less interpretable than a single tree.\n- Common confusion: adding more trees does not cause overfitting in a random forest; it just stops improving after a point."
+  },
+  {
+    "id": "boosting",
+    "name": "Boosting",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["ensemble_methods", "gradient_descent"],
+    "reference_notes": "- Boosting builds models sequentially, each one focusing on the errors of the ensemble so far.\n- Gradient boosting fits each new tree to the residuals (the negative gradient of the loss) of the current ensemble.\n- It mainly reduces bias by combining many weak learners (often shallow trees).\n- The learning rate (shrinkage) scales each tree's contribution; smaller rates need more trees but usually generalize better.\n- Unlike bagging, boosting can overfit if it runs too many rounds, so early stopping on a validation set is standard.\n- Popular implementations: XGBoost, LightGBM, CatBoost; often the strongest choice for tabular data.\n- Common confusion: boosting trains models one after another, not in parallel and independently like bagging."
+  },
+  {
+    "id": "k_means",
+    "name": "K-Means Clustering",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["feature_scaling"],
+    "reference_notes": "- K-means is an unsupervised algorithm that groups data into k clusters without labels.\n- It alternates two steps: assign each point to the nearest centroid, then move each centroid to the mean of its assigned points, until assignments stop changing.\n- It minimizes the within-cluster sum of squared distances (inertia).\n- k must be chosen in advance, e.g. with the elbow method or silhouette score.\n- Results depend on initialization; k-means++ and multiple restarts help avoid poor local optima.\n- It assumes roughly spherical, similar-sized clusters and is sensitive to feature scale and outliers.\n- Common confusion: k-means is not k-nearest neighbors; KNN is a supervised method that predicts from labeled neighbors."
+  },
+  {
+    "id": "neural_networks",
+    "name": "Neural Networks",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["logistic_regression", "gradient_descent"],
+    "reference_notes": "- A neural network stacks layers of units; each unit computes a weighted sum of its inputs plus a bias, then applies a non-linear activation function.\n- Non-linear activations (ReLU, sigmoid, tanh) are essential: without them, stacked layers collapse to a single linear model.\n- A single unit with a sigmoid activation is equivalent to logistic regression.\n- Hidden layers learn intermediate features automatically instead of relying on hand-crafted ones.\n- Networks are trained with gradient descent, using backpropagation to compute the gradients.\n- They have many parameters, so they need lots of data and regularization (dropout, weight decay, early stopping) to avoid overfitting.\n- Common confusion: more layers is not automatically better; deeper networks are harder to train and easier to overfit."
+  },
+  {
+    "id": "backpropagation",
+    "name": "Backpropagation",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["neural_networks"],
+    "reference_notes": "- Backpropagation efficiently computes the gradient of the loss with respect to every weight in a neural network.\n- It applies the chain rule backward from the output layer to the input layer, reusing intermediate results from the forward pass.\n- Forward pass: compute activations and the loss. Backward pass: propagate error gradients layer by layer.\n- The gradients are then used by an optimizer such as gradient descent to update the weights.\n- Vanishing gradients: with saturating activations like sigmoid, gradients shrink through many layers and early layers learn slowly; ReLU and careful initialization help.\n- Exploding gradients can be controlled with gradient clipping.\n- Common confusion: backpropagation computes gradients; it is not the optimizer that updates the weights."
   }
 ]
