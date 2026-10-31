@@ -420,22 +420,111 @@ function slowNotice() {
   return () => { clearTimeout(timer); $("trace-slow").hidden = true; };
 }
 
+// ---------- annotated claims ----------
+
+function normText(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// Share of the longer text's words (3+ letters) that both texts have: 1 = same words.
+function wordOverlap(a, b) {
+  const wa = new Set(normText(a).split(" ").filter((w) => w.length >= 3));
+  const wb = new Set(normText(b).split(" ").filter((w) => w.length >= 3));
+  if (!wa.size || !wb.size) return 0;
+  let both = 0;
+  for (const w of wa) if (wb.has(w)) both++;
+  return both / Math.max(wa.size, wb.size);
+}
+
+// Tag each cleaned claim: "wrong" if it is a misconception's evidence (wins), "correct" if the
+// grader listed it as correct, else "plain". Exact text first, then a close reworded match.
+function annotateClaims(claims, grade, threshold = 0.6) {
+  const same = (a, b) => normText(a) === normText(b) || wordOverlap(a, b) >= threshold;
+  return claims.map((text) => {
+    const m = (grade.misconceptions || []).find((x) => same(text, x.evidence));
+    if (m) return { text, kind: "wrong", label: m.label };
+    if ((grade.correct_claims || []).some((c) => same(text, c))) return { text, kind: "correct", label: null };
+    return { text, kind: "plain", label: null };
+  });
+}
+
+function renderAnnotatedClaims(claims, grade) {
+  const parts = annotateClaims(claims, grade);
+  if (!parts.length) {
+    $("claims").replaceChildren(el("span", { class: "empty" }, "No claims found in the transcript."));
+    return;
+  }
+  const nodes = parts.flatMap((p, i) => {
+    const sep = i < parts.length - 1 ? " " : null;
+    if (p.kind !== "wrong") return [el("span", { class: `claim ${p.kind}` }, p.text), sep];
+    return [el("span", { class: "claim-wrap" },
+      el("span", { class: "claim wrong", tabindex: "0", title: `Misconception: ${p.label}`, "aria-label": `${p.text} Misconception: ${p.label}` }, p.text),
+      el("span", { class: "claim-label", "aria-hidden": "true" }, p.label)), sep];
+  });
+  $("claims").replaceChildren(...nodes.filter((n) => n != null)); // replaceChildren would print null as "null"
+}
+
+// ---------- mastery counter ----------
+
+// Integer percentages from `from` to `to` over `steps` frames, easing out; always ends on `to`.
+function countFrames(from, to, steps = 24) {
+  const out = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = 1 - Math.pow(1 - i / steps, 3);
+    out.push(Math.round(from + (to - from) * t));
+  }
+  return out;
+}
+
+let countTimer = null;
+function showMastery(prevFraction, newFraction) {
+  const from = Math.round((prevFraction ?? 0) * 100);
+  const to = Math.round(newFraction * 100);
+  const num = $("mastery-num");
+  const delta = $("mastery-delta");
+  clearTimeout(countTimer);
+  delta.hidden = to === from;
+  delta.textContent = to > from ? `+${to - from}` : `${to - from}`;
+  delta.classList.toggle("down", to < from);
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (to <= from || reduced) {
+    num.textContent = `${to}%`;
+    return;
+  }
+  num.classList.remove("rising");
+  void num.offsetWidth; // restart the colour animation
+  num.classList.add("rising");
+  const frames = countFrames(from, to);
+  let i = 0;
+  // setTimeout, not requestAnimationFrame: rAF pauses in background tabs and would leave the
+  // number stuck mid-count; timers always finish (~0.5s total).
+  const tick = () => {
+    num.textContent = `${frames[i]}%`;
+    if (++i < frames.length) countTimer = setTimeout(tick, 20);
+  };
+  tick();
+}
+
+function masteryOf(conceptId) {
+  return state.learner_state.find((s) => s.concept_id === conceptId)?.mastery ?? 0;
+}
+
 // ---------- result panel ----------
 
-function renderResult(r) {
+function renderResult(r, prevMastery = null) {
   const counts = Object.fromEntries(
     state.misconceptions.filter((m) => m.concept_id === r.concept_id).map((m) => [m.label, m.count])
   );
 
-  fillList($("claims"), r.clean.claims, (c) => el("li", {}, c), "No claims found in the transcript.");
+  showMastery(prevMastery, r.state.mastery);
+  renderAnnotatedClaims(r.clean.claims, r.grade);
   $("corrections").textContent = r.clean.self_corrections.length
     ? `You corrected yourself: ${r.clean.self_corrections.join("; ")}`
     : "";
   const h = r.hedging;
   $("hedging").textContent =
     `Hesitation ${Math.round(h.blended * 100)}% (counted ${h.code.fillers} fillers, ` +
-    `${h.code.hedges} hedges, ${h.code.reversals} reversals; model heard ${Math.round(h.llm * 100)}%). ` +
-    `Mastery now ${Math.round(r.state.mastery * 100)}%.`;
+    `${h.code.hedges} hedges, ${h.code.reversals} reversals; model heard ${Math.round(h.llm * 100)}%).`;
 
   fillList($("correct"), r.grade.correct_claims, (c) => el("li", {}, c), "Nothing correct yet.");
   fillList($("missing"), r.grade.missing_points, (c) => el("li", {}, c), "Nothing important missing.");
@@ -532,6 +621,7 @@ async function submitCheck(event) {
     feedback.className = `check-feedback ${data.correct ? "right" : "wrong"}`;
     $("check-answer").disabled = data.correct;
     lastUpdated = data.state.concept_id;
+    if (data.correct) showMastery(masteryOf(data.state.concept_id), data.state.mastery);
     await refreshState();
     button.disabled = data.correct;
   } catch (err) {
@@ -738,8 +828,9 @@ async function handleEvent(e) {
   else if (e.type === "error") showFriendlyError(e.status, e.detail);
   else if (e.type === "result") {
     lastUpdated = e.data.concept_id;
+    const prevMastery = masteryOf(e.data.concept_id); // before the refresh, for the counter
     await refreshState();
-    renderResult(e.data);
+    renderResult(e.data, prevMastery);
     renderLesson(e.data);
     loadHistory(e.data.concept_id);
   } else if (e.type === "session") {

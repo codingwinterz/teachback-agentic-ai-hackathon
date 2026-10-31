@@ -98,19 +98,28 @@
       </section>
 
       <section id="result" class="result" aria-live="polite" hidden>
+        <p id="mastery-change" class="mastery-change" aria-live="polite">
+          Mastery <span id="mastery-num" class="mastery-num">0%</span>
+          <span id="mastery-delta" class="mastery-delta" hidden></span>
+        </p>
         <div id="next" class="next"></div>
         <div class="columns">
           <div>
             <h3>What you said</h3>
-            <ul id="claims" class="claims"></ul>
+            <p class="claim-legend">
+              <span class="claim correct">correct</span>
+              <span class="claim wrong">misconception</span>
+              <span class="claim plain">not graded</span>
+            </p>
+            <p id="claims" class="annotated"></p>
+            <h3>Missing from your explanation</h3>
+            <ul id="missing" class="missing-points"></ul>
             <p id="corrections" class="muted small"></p>
             <p id="hedging" class="muted small"></p>
           </div>
           <div>
             <h3>Correct</h3>
             <ul id="correct" class="marks correct"></ul>
-            <h3>Missing</h3>
-            <ul id="missing" class="marks missing"></ul>
             <h3>Misconceptions</h3>
             <ul id="misconceptions" class="marks wrong"></ul>
           </div>

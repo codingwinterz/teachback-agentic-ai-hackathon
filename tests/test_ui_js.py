@@ -153,6 +153,54 @@ def test_page_has_quick_start_example_button_and_wake_banner():
     assert 'id="transcript" autofocus' in html  # dictation is still the main input, focused on load
 
 
+ANNOTATE = ["normText", "wordOverlap", "annotateClaims"]
+
+
+def test_annotate_claims_marks_correct_wrong_and_plain():
+    claims = ["Overfitting is when the model fits the noise in the training data.",
+              "It does really great on the training set but badly on new data.",
+              "Adding more data always fixes it.",
+              "I like pizza."]
+    grade = {"correct_claims": ["Overfitting is when the model fits the noise in the training data.",
+                                "It does great on the training set but badly on new data"],  # reworded
+             "missing_points": ["Remedies such as regularization"],
+             "misconceptions": [{"label": "thinks more data always fixes overfitting",
+                                 "evidence": "Adding more data always fixes it."}]}
+    out = _run(ANNOTATE, f"annotateClaims({json.dumps(claims)}, {json.dumps(grade)})")
+    assert [p["kind"] for p in out] == ["correct", "correct", "wrong", "plain"]
+    assert out[2]["label"] == "thinks more data always fixes overfitting"
+    assert [p["text"] for p in out] == claims  # the student's own words are shown unchanged
+
+
+def test_annotate_claims_misconception_wins_and_handles_empty_grades():
+    claim = "More data always fixes overfitting."
+    grade = {"correct_claims": [claim], "misconceptions": [{"label": "L", "evidence": claim}]}
+    assert _run(ANNOTATE, f"annotateClaims({json.dumps([claim])}, {json.dumps(grade)})")[0]["kind"] == "wrong"
+    assert _run(ANNOTATE, 'annotateClaims(["A claim here."], {})') == [
+        {"text": "A claim here.", "kind": "plain", "label": None}]
+    assert _run(ANNOTATE, "annotateClaims([], {correct_claims: []})") == []
+
+
+def test_word_overlap_is_not_fooled_by_short_shared_words():
+    assert _run(["normText", "wordOverlap"], 'wordOverlap("It is a model", "It is a dog")') < 0.6
+    assert _run(["normText", "wordOverlap"], 'wordOverlap("Fits the NOISE!", "fits the noise")') == 1
+
+
+def test_count_frames_rise_smoothly_and_end_on_target():
+    frames = _run(["countFrames"], "countFrames(28, 46, 24)")
+    assert len(frames) == 24 and frames[-1] == 46
+    assert all(a <= b for a, b in zip(frames, frames[1:]))  # never goes backwards
+    assert frames[0] > 28  # starts moving immediately (ease-out)
+    assert _run(["countFrames"], "countFrames(40, 40, 5)") == [40] * 5
+
+
+def test_result_panel_markup_for_annotations():
+    html = (Path(__file__).resolve().parent.parent / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    assert '<p id="claims" class="annotated">' in html and 'id="mastery-num"' in html
+    assert html.index('id="claims"') < html.index('id="missing"')  # missing points listed beneath
+    assert html.count('id="missing"') == 1  # no duplicate missing list
+
+
 def test_tool_label_formats_args():
     assert _run(["toolLabel"], 'toolLabel("tool.pick_next_concept", {strategy: "due"})') == \
         "pick_next_concept(strategy=due)"
