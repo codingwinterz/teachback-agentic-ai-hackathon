@@ -5,7 +5,7 @@ import sqlite3
 import time
 from typing import Callable
 
-from app.schemas import Concept, LearnerState, Misconception
+from app.schemas import Concept, LearnerState, Lesson, Misconception
 
 
 class AgentLogger:
@@ -36,6 +36,9 @@ class AgentLogger:
 
     def step_start(self, step: str) -> None:
         self.on_event({"type": "step_start", "step": step})
+
+    def step_skipped(self, step: str) -> None:
+        self.on_event({"type": "step_skipped", "step": step})
 
     def step_done(self, step: str) -> None:
         self.on_event({"type": "step_done", "step": step,
@@ -102,6 +105,52 @@ def get_open_misconceptions(conn: sqlite3.Connection, concept_id: str) -> list[s
 def get_dependent_concepts(conn: sqlite3.Connection, concept_id: str) -> list[str]:
     rows = conn.execute("SELECT id, prerequisites_json FROM concepts").fetchall()
     return [r["id"] for r in rows if concept_id in json.loads(r["prerequisites_json"])]
+
+
+def save_lesson(
+    conn: sqlite3.Connection, log: AgentLogger, attempt_id: int, concept_id: str,
+    label: str | None, lesson: Lesson,
+) -> int:
+    start = time.perf_counter()
+    cur = conn.execute(
+        "INSERT INTO lessons (attempt_id, concept_id, misconception_label, lesson_json) VALUES (?, ?, ?, ?)",
+        (attempt_id, concept_id, label, lesson.model_dump_json()),
+    )
+    conn.commit()
+    log.log("teach", "save_lesson", {"attempt_id": attempt_id, "label": label},
+            {"lesson_id": cur.lastrowid}, elapsed_s=_since(start))
+    return cur.lastrowid
+
+
+def get_lesson(conn: sqlite3.Connection, lesson_id: int) -> tuple[sqlite3.Row, Lesson]:
+    row = conn.execute("SELECT * FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown lesson: {lesson_id}")
+    return row, Lesson.model_validate_json(row["lesson_json"])
+
+
+def apply_check_result(
+    conn: sqlite3.Connection, log: AgentLogger, lesson_id: int, concept_id: str,
+    label: str | None, answer: str, correct: bool, mastery: float,
+) -> LearnerState:
+    """Record the check answer; if correct, raise mastery and resolve the misconception."""
+    start = time.perf_counter()
+    conn.execute("UPDATE lessons SET answer = ?, correct = ? WHERE id = ?",
+                 (answer, int(correct), lesson_id))
+    if correct:
+        conn.execute("UPDATE learner_state SET mastery = ? WHERE concept_id = ?", (mastery, concept_id))
+        if label:
+            conn.execute(
+                "UPDATE misconceptions SET resolved = 1 WHERE concept_id = ? AND label = ?",
+                (concept_id, label),
+            )
+    conn.commit()
+    row = conn.execute("SELECT * FROM learner_state WHERE concept_id = ?", (concept_id,)).fetchone()
+    state = LearnerState(**dict(row))
+    log.log("check", "apply_check_result",
+            {"lesson_id": lesson_id, "correct": correct, "label": label},
+            state.model_dump(), elapsed_s=_since(start))
+    return state
 
 
 def update_learner_state(

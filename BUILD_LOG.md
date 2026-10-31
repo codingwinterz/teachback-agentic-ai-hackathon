@@ -102,3 +102,13 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - Fresh deploy starts with `LLM_MODE=fake` so it spends no quota until switched to real.
 - Phone check at 390px (iframe, since the window couldn't resize): no horizontal overflow; fixed header wrapping onto 3 rows, hid the Ctrl+Enter hint, un-stuck the sidebar on narrow screens.
 - Known limit: Render free disk is ephemeral, so SQLite progress resets on each deploy/restart.
+
+## Teaching step (fake mode only)
+**I decided:** when decide picks re_explain or a misconception is found, generate a 3-4 sentence mini-lesson from the reference notes that corrects that misconception, with one example and one check question; show it as a Lesson card; a correct check answer counts toward mastery; works in the fake LLM; keep steps 1-4 unchanged.
+
+**AI generated (I approved):**
+- Step 5 "teach" runs after decide and after the attempt is saved (a lesson references its attempt); otherwise a `step_skipped` event. New `lessons` table.
+- `POST /lessons/{id}/answer`: one LLM call judges the answer. Correct -> mastery moves toward 1 with weight 0.25 (half a full attempt's 0.5) and the misconception is marked resolved; wrong -> no change, retry allowed. Re-answering a correctly answered lesson returns 409 so mastery can't be farmed.
+- Fake LLM: lesson from the reference bullet that best overlaps the wrong claim; answers judged by word overlap with the expected answer, and repeating an absolute ("always") without a negation counts as wrong.
+- Real-mode cost: +1 call per attempt that triggers a lesson, +1 per check answer.
+- Browser check: wrong answer kept mastery at 28%; correct answer -> 46% and the misconception left the open list.

@@ -5,11 +5,11 @@ import httpx
 import pytest
 from google.genai import errors
 
-from app import config, db, hedging
-from app.agent import run_attempt
+from app import config, db, hedging, scoring
+from app.agent import AlreadyAnswered, answer_lesson, run_attempt
 from app.fake_llm import FakeLLM
 from app.llm import GeminiLLM, LLMError, LLMResult
-from app.schemas import CleanResult, Decision, GradeResult, Misconception
+from app.schemas import CleanResult, Decision, GradeResult, Lesson, Misconception
 
 MESSY = (
     "Um, okay so overfitting is, like, when the model, uh, I think it's when it fits "
@@ -59,6 +59,12 @@ class CannedLLM:
                 reason="You have the core idea; let's test the 'more data' claim.",
                 followup_question="Can more data ever fail to fix overfitting?",
             ),
+            Lesson: Lesson(
+                lesson="More data often helps, but it is not guaranteed to fix overfitting.",
+                example="A huge decision tree can still memorize noise in a big dataset.",
+                check_question="When can more data fail to fix overfitting?",
+                expected_answer="When the model is too flexible or the new data is noisy.",
+            ),
         }
 
     def structured(self, system, user, schema, thinking=None):
@@ -85,8 +91,15 @@ def test_core_loop_with_fake_llm(conn):
     llm = CannedLLM()
     result = run_attempt(conn, llm, "overfitting", MESSY)
 
-    assert [c[0] for c in llm.calls] == ["CleanResult", "GradeResult", "Decision"]
-    assert llm.thinking == {"CleanResult": "low", "GradeResult": None, "Decision": "low"}
+    # steps 1-4 unchanged; teach runs last because a misconception was found
+    assert [c[0] for c in llm.calls] == ["CleanResult", "GradeResult", "Decision", "Lesson"]
+    assert llm.thinking == {"CleanResult": "low", "GradeResult": None, "Decision": "low",
+                            "Lesson": "low"}
+    assert result.lesson.check_question.startswith("When can more data")
+    lesson_row = conn.execute("SELECT * FROM lessons WHERE id = ?", (result.lesson_id,)).fetchone()
+    assert lesson_row["misconception_label"] == "thinks more data always fixes overfitting"
+    assert lesson_row["attempt_id"] == result.attempt_id
+    assert "thinks more data always fixes overfitting" in llm.calls[-1][1]  # lesson targets it
     # blended hedge = mean of LLM 0.6 and the code score
     code = hedging.code_hedging(MESSY).score
     assert result.hedging["blended"] == round((0.6 + code) / 2, 3)
@@ -101,13 +114,14 @@ def test_core_loop_with_fake_llm(conn):
     assert conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 1
     tool_names = [e["tool_name"] for e in result.agent_log]
     assert tool_names[:4] == ["get_concept", "llm.clean", "hedging.blend", "llm.grade"]
-    assert "update_learner_state" in tool_names and tool_names[-1] == "llm.decide"
+    assert "update_learner_state" in tool_names
+    assert tool_names[-3:] == ["llm.decide", "llm.teach", "save_lesson"]
 
     # model + elapsed_s recorded per entry, and summarized per step
     llm_entries = [e for e in result.agent_log if e["tool_name"].startswith("llm.")]
     assert all(e["model"] == "fake-model" and e["elapsed_s"] == 0.5 for e in llm_entries)
     assert all(e["elapsed_s"] is not None for e in result.agent_log)
-    assert list(result.step_timings) == ["context", "clean", "grade", "update", "decide"]
+    assert list(result.step_timings) == ["context", "clean", "grade", "update", "decide", "teach"]
     assert result.step_timings["clean"] >= 0.5 and result.step_timings["decide"] >= 0.5
     assert result.total_s >= 0
 
@@ -299,6 +313,46 @@ def test_dev_fake_llm_advances_on_a_strong_answer(conn):
     assert result.decision.target_concept_id == "bias_variance"
 
 
+def test_teach_step_lesson_and_check_answer_count_toward_mastery(conn):
+    llm = FakeLLM()
+    result = run_attempt(conn, llm, "overfitting", MESSY)
+    lesson = result.lesson
+    assert lesson is not None and result.lesson_id
+    assert "not" in lesson.lesson and lesson.example.startswith("For example")
+    assert 2 <= lesson.lesson.count(". ") + 1 <= 4  # short: about 3-4 sentences
+    before = result.state.mastery
+
+    wrong = answer_lesson(conn, llm, result.lesson_id, "Yes, more data always fixes it.")
+    assert wrong.correct is False and wrong.state.mastery == before
+    assert wrong.resolved_misconception is None
+
+    right = answer_lesson(conn, llm, result.lesson_id,
+                          "More data helps but is not guaranteed, e.g. if the model is extremely "
+                          "flexible or the new data is noisy.")
+    assert right.correct is True
+    assert right.state.mastery == scoring.mastery_after_check(before, True) > before
+    label = conn.execute("SELECT label, resolved FROM misconceptions").fetchone()
+    assert right.resolved_misconception == label["label"] and label["resolved"] == 1
+
+    with pytest.raises(AlreadyAnswered):  # can't farm mastery by re-answering
+        answer_lesson(conn, llm, result.lesson_id, "same answer again")
+    tools_used = [r["tool_name"] for r in conn.execute(
+        "SELECT tool_name FROM agent_log WHERE step = 'check' ORDER BY id")]
+    assert tools_used[:3] == ["llm.check", "get_learner_state", "apply_check_result"]
+
+
+def test_teach_step_skipped_on_a_strong_answer(conn):
+    strong = ("Overfitting is when a model learns the noise in the training data instead of the "
+              "underlying pattern. It shows low training error but high error on unseen validation "
+              "data. Causes include a model too complex for the data. Remedies include regularization, "
+              "early stopping, simpler models and more representative data.")
+    events = []
+    result = run_attempt(conn, FakeLLM(), "overfitting", strong, on_event=events.append)
+    assert result.lesson is None and result.lesson_id is None
+    assert {"type": "step_skipped", "step": "teach"} in events
+    assert conn.execute("SELECT COUNT(*) FROM lessons").fetchone()[0] == 0
+
+
 def test_get_llm_defaults_to_fake_and_health_reports_it(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
@@ -321,12 +375,17 @@ def test_get_llm_defaults_to_fake_and_health_reports_it(monkeypatch, tmp_path):
                            json={"concept_id": "overfitting", "transcript": MESSY}) as s:
             events = [json.loads(line[6:]) for line in s.iter_lines() if line.startswith("data: ")]
         steps = [(e["type"], e["step"]) for e in events if e["type"] in ("step_start", "step_done")]
-        assert steps == [(t, s) for s in ("clean", "grade", "update", "decide")
+        assert steps == [(t, s) for s in ("clean", "grade", "update", "decide", "teach")
                          for t in ("step_start", "step_done")]
         done = {e["step"]: e for e in events if e["type"] == "step_done"}
         assert done["clean"]["model"] == "fake-dev" and done["update"]["model"] == "code"
         assert events[-1]["type"] == "result"
         assert events[-1]["data"]["state"]["attempts_count"] == 2
+
+        lesson_id = events[-1]["data"]["lesson_id"]
+        r = client.post(f"/lessons/{lesson_id}/answer", json={"answer": "more data always fixes it"})
+        assert r.status_code == 200 and r.json()["correct"] is False
+        assert client.post("/lessons/99999/answer", json={"answer": "x"}).status_code == 404
 
         bad = client.post("/attempt/stream", json={"concept_id": "nope", "transcript": "x"})
         assert '"type": "error"' in bad.text and '"status": 404' in bad.text

@@ -9,8 +9,13 @@ from typing import Callable, Protocol
 from app import hedging, prompts, scoring, tools
 from app.llm import LLM, LLMResult
 from app.schemas import (
-    AttemptResult, CleanResult, Decision, DecisionContext, GradeResult,
+    AttemptResult, CheckResult, CleanResult, Decision, DecisionContext, GradeResult, Lesson,
+    LessonAnswerResult,
 )
+
+
+class AlreadyAnswered(ValueError):
+    pass
 
 
 class Decider(Protocol):
@@ -136,6 +141,30 @@ def run_attempt(
     )
     conn.commit()
 
+    # 5. TEACH: a mini-lesson + check question when re-explaining or a misconception was found
+    lesson, lesson_id = None, None
+    if decision.action == "re_explain" or grade.misconceptions:
+        log.step_start("teach")
+        target = grade.misconceptions[0] if grade.misconceptions else None
+        label = target.label if target else None
+        out = llm.structured(
+            prompts.TEACH_SYSTEM,
+            prompts.TEACH_USER.format(
+                concept_name=concept.name,
+                reference_notes=concept.reference_notes,
+                label=label or "(none: re-explain the core idea)",
+                evidence=target.evidence if target else ("; ".join(clean.claims) or "(no claims)"),
+            ),
+            Lesson,
+            thinking="low",
+        )
+        lesson = out.parsed
+        _log_llm(log, "teach", "llm.teach", {"label": label}, out)
+        lesson_id = tools.save_lesson(conn, log, cur.lastrowid, concept_id, label, lesson)
+        log.step_done("teach")
+    else:
+        log.step_skipped("teach")
+
     return AttemptResult(
         run_id=log.run_id,
         attempt_id=cur.lastrowid,
@@ -146,7 +175,36 @@ def run_attempt(
         attempt_score=score,
         state=state,
         decision=decision,
+        lesson=lesson,
+        lesson_id=lesson_id,
         step_timings=log.step_timings(),
         total_s=round(time.perf_counter() - run_start, 2),
         agent_log=log.entries(),
+    )
+
+
+def answer_lesson(conn: sqlite3.Connection, llm: LLM, lesson_id: int, answer: str) -> LessonAnswerResult:
+    """Judge the answer to a lesson's check question; a correct one counts toward mastery."""
+    row, lesson = tools.get_lesson(conn, lesson_id)
+    if row["correct"] == 1:  # no farming mastery by re-answering
+        raise AlreadyAnswered(f"Lesson {lesson_id} was already answered correctly")
+    log = tools.AgentLogger(conn, uuid.uuid4().hex[:8])
+    label = row["misconception_label"]
+    out = llm.structured(
+        prompts.CHECK_SYSTEM,
+        prompts.CHECK_USER.format(question=lesson.check_question, expected=lesson.expected_answer,
+                                  label=label or "(none)", answer=answer),
+        CheckResult,
+        thinking="low",
+    )
+    check: CheckResult = out.parsed
+    _log_llm(log, "check", "llm.check", {"lesson_id": lesson_id}, out)
+    prior = tools.get_learner_state(conn, log, row["concept_id"], step="check")
+    state = tools.apply_check_result(
+        conn, log, lesson_id, row["concept_id"], label, answer, check.correct,
+        mastery=scoring.mastery_after_check(prior.mastery, check.correct),
+    )
+    return LessonAnswerResult(
+        lesson_id=lesson_id, correct=check.correct, feedback=check.feedback, state=state,
+        resolved_misconception=label if check.correct else None,
     )

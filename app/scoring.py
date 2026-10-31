@@ -20,6 +20,16 @@ def next_mastery(prev_mastery: float, attempts_count: int, score: float) -> floa
     return round((1 - ALPHA) * prev_mastery + ALPHA * score, 3)
 
 
+CHECK_ALPHA = 0.25  # a lesson check answer counts for half as much as a full attempt
+
+
+def mastery_after_check(prev_mastery: float, correct: bool) -> float:
+    """A correct check answer pulls mastery toward 1; a wrong one leaves it unchanged."""
+    if not correct:
+        return prev_mastery
+    return round((1 - CHECK_ALPHA) * prev_mastery + CHECK_ALPHA * 1.0, 3)
+
+
 def next_confidence(prev_confidence: float, attempts_count: int, hedging_score: float) -> float:
     current = 1 - hedging_score
     if attempts_count == 0:

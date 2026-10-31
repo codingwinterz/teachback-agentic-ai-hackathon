@@ -9,9 +9,9 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config, db
-from app.agent import run_attempt
+from app.agent import AlreadyAnswered, answer_lesson, run_attempt
 from app.llm import LLMError, get_llm
-from app.schemas import AttemptRequest, AttemptResult
+from app.schemas import AttemptRequest, AttemptResult, LessonAnswerRequest, LessonAnswerResult
 
 conn = db.connect()
 attempt_lock = threading.Lock()  # one attempt at a time on the shared SQLite connection
@@ -65,6 +65,19 @@ def post_attempt_stream(req: AttemptRequest):
             yield f"data: {json.dumps(event, default=str)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/lessons/{lesson_id}/answer", response_model=LessonAnswerResult)
+def post_lesson_answer(lesson_id: int, req: LessonAnswerRequest):
+    try:
+        with attempt_lock:
+            return answer_lesson(conn, get_llm(), lesson_id, req.answer)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except AlreadyAnswered as e:
+        raise HTTPException(409, str(e))
+    except LLMError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.get("/health")

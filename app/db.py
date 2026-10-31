@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS misconceptions (
     UNIQUE (concept_id, label)
 );
 
+-- Mini-lessons from the teach step and the student's answer to the check question.
+CREATE TABLE IF NOT EXISTS lessons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempt_id INTEGER NOT NULL REFERENCES attempts(id),
+    concept_id TEXT NOT NULL REFERENCES concepts(id),
+    misconception_label TEXT,
+    lesson_json TEXT NOT NULL,
+    answer TEXT,
+    correct INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- run_id, model, elapsed_s are additions to the CLAUDE.md schema.
 CREATE TABLE IF NOT EXISTS agent_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

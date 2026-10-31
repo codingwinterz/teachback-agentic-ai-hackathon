@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from app import hedging
 from app.llm import LLMResult
-from app.schemas import CleanResult, Decision, GradeResult, Misconception
+from app.schemas import CheckResult, CleanResult, Decision, GradeResult, Lesson, Misconception
 
 ABSOLUTES = re.compile(r"\b(always|never|only|guarantee[sd]?|every time|completely)\b", re.I)
 REVERSAL = re.compile(r"\b(no,? wait|wait,? no|actually,? no|i mean|scratch that|or rather)\b[,\s]*", re.I)
@@ -99,6 +99,45 @@ def _decide(user: str) -> Decision:
                     followup_question=f"Can you add something about: {gap}?")
 
 
+def _overlap(a: str, b: str) -> float:
+    """Share of b's content words that also appear in a."""
+    words_b = set(WORD.findall(b.lower()))
+    return len(words_b & set(WORD.findall(a.lower()))) / len(words_b) if words_b else 0.0
+
+
+def _teach(user: str) -> Lesson:
+    concept = _between(user, "Concept:", "\n")
+    notes = [n[2:] for n in _between(user, "Reference notes:", "Misconception to correct:").splitlines()
+             if n.startswith("- ")]
+    label = _between(user, "Misconception to correct:", "\n")
+    evidence = _between(user, "Student's claim:")
+    has_misconception = not label.startswith("(none")
+
+    # the note that best addresses the claim, preferring ones that say what is NOT true
+    best = max(notes, key=lambda n: _overlap(n, evidence) + (0.2 if re.search(r"\bnot\b", n, re.I) else 0))
+    core = notes[0]
+    example = next((n for n in notes if "e.g." in n or "example" in n.lower()), notes[min(1, len(notes) - 1)])
+    if has_misconception:
+        lesson = (f"Careful: \"{evidence.rstrip('.')}\" is not quite right. {best} "
+                  f"Remember the core idea: {core}")
+        question = f"In a sentence or two, why is \"{evidence.rstrip('.')}\" not always true?"
+    else:
+        lesson = f"Let's go over {concept} again. {core} {best}"
+        question = f"In a sentence or two, what is {concept} and why does it matter?"
+    return Lesson(lesson=lesson, example=f"For example: {example}", check_question=question,
+                  expected_answer=best)
+
+
+def _check(user: str) -> CheckResult:
+    expected = _between(user, "Expected answer (key points):", "\n")
+    answer = _between(user, "<answer>", "</answer>")
+    repeats_absolute = bool(ABSOLUTES.search(answer)) and not re.search(r"\bnot\b|n't", answer, re.I)
+    correct = _overlap(answer, expected) >= 0.25 and not repeats_absolute
+    feedback = ("Yes, that's the key idea." if correct
+                else f"Not quite. The key idea: {expected}")
+    return CheckResult(correct=correct, feedback=feedback)
+
+
 class FakeLLM:
     model = "fake-dev"
 
@@ -106,7 +145,8 @@ class FakeLLM:
         self.delay_s = delay_s  # simulated latency so the UI trace visibly steps through
 
     def structured(self, system: str, user: str, schema: type[BaseModel], thinking: str | None = None) -> LLMResult:
-        handlers = {CleanResult: _clean, GradeResult: _grade, Decision: _decide}
+        handlers = {CleanResult: _clean, GradeResult: _grade, Decision: _decide,
+                    Lesson: _teach, CheckResult: _check}
         if schema not in handlers:
             raise ValueError(f"FakeLLM has no handler for {schema.__name__}")
         start = time.perf_counter()

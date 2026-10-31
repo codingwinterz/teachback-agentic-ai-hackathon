@@ -5,6 +5,7 @@ const STEPS = [
   { id: "grade", label: "Grade", tools: "compare with reference notes" },
   { id: "update", label: "Update", tools: "mastery, misconceptions" },
   { id: "decide", label: "Decide", tools: "pick the next action" },
+  { id: "teach", label: "Teach", tools: "mini-lesson if needed" },
 ];
 
 const ACTIONS = {
@@ -103,7 +104,7 @@ function renderMastery() {
       m.label,
       el("span", { class: "count" }, `×${m.count}`),
       el("span", { class: "where" }, byId[m.concept_id]?.name ?? m.concept_id)
-    ), "None yet. Misconceptions the tutor spots will collect here.");
+    ), "No open misconceptions. Ones the tutor spots collect here until a lesson check clears them.");
 }
 
 async function refreshState() {
@@ -136,6 +137,13 @@ function onStepDone({ step, model, elapsed_s }) {
   row.classList.remove("running");
   row.classList.add("done");
   row.querySelector(".step-meta").textContent = `${model} · ${Number(elapsed_s).toFixed(2)}s`;
+}
+
+function onStepSkipped(step) {
+  const row = $(`step-${step}`);
+  if (!row) return;
+  row.classList.add("skipped");
+  row.querySelector(".step-meta").textContent = "not needed";
 }
 
 function onTool({ step, tool_name }) {
@@ -205,6 +213,59 @@ function renderResult(r) {
   $("result").hidden = false;
 }
 
+// ---------- lesson card ----------
+
+let lessonId = null;
+
+function renderLesson(r) {
+  lessonId = r.lesson_id;
+  $("lesson").hidden = !r.lesson;
+  if (!r.lesson) return;
+  $("lesson-text").textContent = r.lesson.lesson;
+  $("lesson-example").textContent = r.lesson.example;
+  $("check-question").textContent = r.lesson.check_question;
+  $("check-answer").value = "";
+  $("check-answer").disabled = false;
+  $("check-submit").disabled = false;
+  $("check-feedback").hidden = true;
+}
+
+async function submitCheck(event) {
+  event.preventDefault();
+  const answer = $("check-answer").value.trim();
+  if (!answer || lessonId == null || busy) return;
+  busy = true;
+  const button = $("check-submit");
+  button.disabled = true;
+  button.textContent = "Checking…";
+  const feedback = $("check-feedback");
+  try {
+    const resp = await fetch(`/lessons/${lessonId}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail ?? `status ${resp.status}`);
+    feedback.textContent = data.correct
+      ? `${data.feedback} Mastery now ${Math.round(data.state.mastery * 100)}%.`
+      : `${data.feedback} Try again.`;
+    feedback.className = `check-feedback ${data.correct ? "right" : "wrong"}`;
+    $("check-answer").disabled = data.correct;
+    lastUpdated = data.state.concept_id;
+    await refreshState();
+    button.disabled = data.correct;
+  } catch (err) {
+    feedback.textContent = `Couldn't check the answer: ${err.message}`;
+    feedback.className = "check-feedback wrong";
+    button.disabled = false;
+  } finally {
+    feedback.hidden = false;
+    button.textContent = "Check answer";
+    busy = false;
+  }
+}
+
 // ---------- submit (server-sent events over fetch) ----------
 
 let busy = false; // one attempt at a time: a repeated Ctrl+Enter must not spend a second LLM run
@@ -222,6 +283,7 @@ async function submitAttempt(event) {
   button.disabled = true;
   button.textContent = "Checking…";
   resetTrace();
+  $("lesson").hidden = true;
 
   try {
     const resp = await fetch("/attempt/stream", {
@@ -257,12 +319,14 @@ async function submitAttempt(event) {
 async function handleEvent(e) {
   if (e.type === "step_start") onStepStart(e.step);
   else if (e.type === "step_done") onStepDone(e);
+  else if (e.type === "step_skipped") onStepSkipped(e.step);
   else if (e.type === "tool") onTool(e);
   else if (e.type === "error") showError(`${e.detail} (status ${e.status})`);
   else if (e.type === "result") {
     lastUpdated = e.data.concept_id;
     await refreshState();
     renderResult(e.data);
+    renderLesson(e.data);
   }
 }
 
@@ -277,6 +341,7 @@ async function boot() {
   $("transcript").focus();
   resetTrace();
   $("attempt-form").addEventListener("submit", submitAttempt);
+  $("check-form").addEventListener("submit", submitCheck);
   $("transcript").addEventListener("input", updateWordCount);
   $("transcript").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.repeat) submitAttempt(e);

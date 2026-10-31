@@ -40,7 +40,37 @@ DECIDE_SYSTEM = """You are the tutor's planner. Pick the single best next action
 - review_due: only if nothing above applies and spaced review is the priority.
 Address `reason` to the student in one or two sentences."""
 
-DECIDE_USER = """Concept: {concept_id} ({concept_name})
+TEACH_SYSTEM = """You are a tutor writing a mini-lesson for one student.
+- lesson: 3-4 sentences, plain language, that correct the specific misconception (or, if none, re-explain the core idea).
+  Use only facts from the reference notes. Say directly what is wrong and what is true instead.
+- example: one concrete example, one or two sentences.
+- check_question: one short question the student can answer in a sentence or two that shows whether the correction stuck.
+  Do not make it a yes/no question.
+- expected_answer: the key points a correct answer must contain."""
+
+TEACH_USER = """Concept: {concept_name}
+
+Reference notes:
+{reference_notes}
+
+Misconception to correct: {label}
+Student's claim: {evidence}"""
+
+CHECK_SYSTEM = """You judge a student's short answer to a tutor's check question.
+correct = true if the answer contains the key idea of the expected answer, even in informal or messy spoken words.
+correct = false if it repeats the misconception or misses the key idea.
+feedback: one or two encouraging sentences addressed to the student; if wrong, state the key idea."""
+
+CHECK_USER = """Check question: {question}
+Expected answer (key points): {expected}
+Misconception being corrected: {label}
+
+Student's answer:
+<answer>
+{answer}
+</answer>"""
+
+DECIDE_USER ="""Concept: {concept_id} ({concept_name})
 Attempt score (hedge-discounted): {score}
 Hedging score: {hedging}
 Learner state after update: {state}

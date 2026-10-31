@@ -60,6 +60,22 @@ class Decision(BaseModel):
     )
 
 
+class Lesson(BaseModel):
+    """Step 5 (teach): a mini-lesson that corrects one misconception, plus a check question."""
+
+    lesson: str = Field(description="3-4 sentences correcting the specific misconception.")
+    example: str = Field(description="One concrete example, one or two sentences.")
+    check_question: str = Field(description="One short question that tests the corrected idea.")
+    expected_answer: str = Field(description="Key points a correct answer must contain.")
+
+
+class CheckResult(BaseModel):
+    """Judging the student's answer to a lesson's check question."""
+
+    correct: bool
+    feedback: str = Field(description="One or two sentences addressed to the student.")
+
+
 # ---------- Domain / tool results ----------
 
 
@@ -109,6 +125,18 @@ class AttemptRequest(BaseModel):
     transcript: str = Field(min_length=1)
 
 
+class LessonAnswerRequest(BaseModel):
+    answer: str = Field(min_length=1)
+
+
+class LessonAnswerResult(BaseModel):
+    lesson_id: int
+    correct: bool
+    feedback: str
+    state: LearnerState
+    resolved_misconception: str | None
+
+
 class AttemptResult(BaseModel):
     run_id: str
     attempt_id: int
@@ -119,6 +147,8 @@ class AttemptResult(BaseModel):
     attempt_score: float
     state: LearnerState
     decision: Decision
-    step_timings: dict[str, float]  # seconds per step: context, clean, grade, update, decide
+    lesson: Lesson | None = None  # set when re_explain or a misconception triggers the teach step
+    lesson_id: int | None = None
+    step_timings: dict[str, float]  # seconds per step: context, clean, grade, update, decide, teach
     total_s: float
     agent_log: list[dict]  # each entry includes model and elapsed_s
