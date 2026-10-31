@@ -75,6 +75,49 @@ class CannedLLM:
                          elapsed_s=0.5, last_call_s=0.5)
 
 
+@pytest.mark.parametrize("placeholder", ["null", "NULL", " null ", "", "None", "n/a", "undefined"])
+def test_decision_treats_placeholder_strings_as_absent(placeholder):
+    d = Decision.model_validate({"action": "advance", "reason": "Solid.",
+                                 "followup_question": placeholder, "target_concept_id": placeholder})
+    assert d.followup_question is None and d.target_concept_id is None
+    assert "null" not in d.model_dump_json().replace("null,", "").replace("null}", "")
+
+
+def test_decision_keeps_real_values():
+    d = Decision.model_validate({"action": "ask_followup", "reason": "x",
+                                 "followup_question": "  Why is null hypothesis testing used?  ",
+                                 "target_concept_id": "bias_variance"})
+    assert d.followup_question == "Why is null hypothesis testing used?"
+    assert d.target_concept_id == "bias_variance"
+
+
+def test_string_null_from_model_never_reaches_the_api(monkeypatch, tmp_path):
+    """Gemini-style raw JSON with the string "null" -> the API returns a real null."""
+    raw = '{"action": "advance", "reason": "Solid.", "followup_question": "null", "target_concept_id": "null"}'
+    llm = GeminiLLM(model="m", client=FakeGeminiClient([_gemini_response(raw)]), sleep=lambda s: None)
+    assert llm.structured("s", "u", Decision).parsed.followup_question is None
+
+    from fastapi.testclient import TestClient
+
+    from app import main
+
+    class NullStringDecider(CannedLLM):
+        def structured(self, system, user, schema, thinking=None):
+            if schema is Decision:
+                d = Decision.model_validate_json(raw)
+                return LLMResult(parsed=d, raw_text=raw, model="fake-model")
+            return super().structured(system, user, schema, thinking)
+
+    canned = NullStringDecider()
+    canned.outputs[GradeResult] = GradeResult(correct_claims=["x"], missing_points=[], misconceptions=[])
+    monkeypatch.setattr(main, "conn", db.connect(str(tmp_path / "null.db")))
+    monkeypatch.setattr(main, "get_llm", lambda: canned)
+    with TestClient(main.app) as client:
+        body = client.post("/attempt", json={"concept_id": "overfitting", "transcript": MESSY}).json()
+    assert body["decision"]["followup_question"] is None
+    assert body["decision"]["target_concept_id"] is None
+
+
 def test_code_hedging_counts_messy_transcript():
     counts = hedging.code_hedging(MESSY)
     assert counts.fillers >= 4  # um, like, uh, um, you know

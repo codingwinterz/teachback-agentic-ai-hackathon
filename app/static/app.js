@@ -37,6 +37,13 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+// An optional text field is absent if it's null or a placeholder string like "null".
+function present(value) {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  return ["", "null", "none", "n/a", "na", "undefined"].includes(v.toLowerCase()) ? null : v;
+}
+
 function fillList(listEl, items, render, emptyText) {
   listEl.replaceChildren(
     ...(items.length ? items.map(render) : [el("li", { class: "empty" }, emptyText)])
@@ -191,23 +198,25 @@ function renderResult(r) {
     ), "No misconceptions.");
 
   const d = r.decision;
+  const question = present(d.followup_question);
+  const target = present(d.target_concept_id);
   const buttons = [];
-  if (d.followup_question || d.action === "re_explain") {
+  if (question || d.action === "re_explain") {
     buttons.push(el("button", {
       type: "button", class: "quiet",
       onclick: () => { $("transcript").value = ""; updateWordCount(); $("transcript").focus(); },
-    }, d.followup_question ? "Answer it" : "Try again"));
+    }, question ? "Answer it" : "Try again"));
   }
-  if (d.target_concept_id && byId[d.target_concept_id]) {
+  if (target && byId[target]) {
     buttons.push(el("button", {
       type: "button", class: "quiet",
-      onclick: () => { $("transcript").value = ""; updateWordCount(); selectConcept(d.target_concept_id); },
-    }, `Go to ${byId[d.target_concept_id].name}`));
+      onclick: () => { $("transcript").value = ""; updateWordCount(); selectConcept(target); },
+    }, `Go to ${byId[target].name}`));
   }
   $("next").replaceChildren(
     el("span", { class: "action" }, ACTIONS[d.action] ?? d.action),
     el("span", {}, d.reason),
-    d.followup_question ? el("p", { class: "question" }, d.followup_question) : null,
+    question ? el("p", { class: "question" }, question) : null,
     buttons.length ? el("div", { class: "buttons" }, buttons) : null
   );
   $("result").hidden = false;

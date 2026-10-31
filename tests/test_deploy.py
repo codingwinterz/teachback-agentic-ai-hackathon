@@ -28,8 +28,8 @@ def test_gemini_key_is_a_dashboard_secret_not_a_committed_value():
     assert not re.search(r"AIza[0-9A-Za-z_\-]{20,}", RENDER)
 
 
-def test_fresh_deploy_starts_in_fake_mode_and_uses_the_start_command():
-    assert "value: fake" in _env_block("LLM_MODE")
+def test_deploy_runs_real_mode_and_uses_the_start_command():
+    assert "value: real" in _env_block("LLM_MODE")  # pinned in the Blueprint so a sync can't reset it
     assert "startCommand: python -m app" in RENDER
     assert "healthCheckPath: /health" in RENDER
     assert (ROOT / "app" / "__main__.py").exists()

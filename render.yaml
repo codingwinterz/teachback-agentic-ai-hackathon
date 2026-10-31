@@ -11,9 +11,10 @@ services:
     envVars:
       - key: HOST
         value: 0.0.0.0
-      # "fake" so a fresh deploy spends no quota. Switch to "real" in the dashboard for the demo.
+      # Real Gemini calls. Set here (not only in the dashboard) so a Blueprint sync keeps it.
+      # Every visit that submits an attempt spends free-tier quota.
       - key: LLM_MODE
-        value: fake
+        value: real
       - key: LLM_PROVIDER
         value: gemini
       - key: LLM_MODEL

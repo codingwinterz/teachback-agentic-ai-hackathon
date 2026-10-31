@@ -2,7 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+EMPTY_STRINGS = {"", "null", "none", "n/a", "na", "undefined"}
 
 # ---------- LLM outputs ----------
 
@@ -58,6 +60,14 @@ class Decision(BaseModel):
         default=None,
         description="Concept to go to for revisit_prerequisite or advance.",
     )
+
+    @field_validator("followup_question", "target_concept_id", mode="before")
+    @classmethod
+    def _blank_to_none(cls, v):
+        """Models sometimes write the string "null" (or "", "none") for an absent optional field."""
+        if isinstance(v, str) and v.strip().lower() in EMPTY_STRINGS:
+            return None
+        return v.strip() if isinstance(v, str) else v
 
 
 class Lesson(BaseModel):

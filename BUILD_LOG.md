@@ -112,3 +112,11 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - Fake LLM: lesson from the reference bullet that best overlaps the wrong claim; answers judged by word overlap with the expected answer, and repeating an absolute ("always") without a negation counts as wrong.
 - Real-mode cost: +1 call per attempt that triggers a lesson, +1 per check answer.
 - Browser check: wrong answer kept mastery at 28%; correct answer -> 46% and the misconception left the open list.
+
+## Fix: literal "null" follow-up question + real mode on Render
+**I reported / decided:** the decide message showed a literal "null" when there was no follow-up question; show nothing instead and add a test. Pin `LLM_MODE=real` in render.yaml so a Blueprint sync doesn't reset it.
+
+**AI generated (I approved):**
+- Cause: the model returns the *string* "null" for an absent optional field (a JSON null is already skipped by the UI). A Pydantic `field_validator` on Decision turns "null"/""/"none"/"n/a"/"undefined" into None for followup_question and target_concept_id, and the UI's `present()` guard does the same.
+- Tests: placeholder strings -> None, real text kept, Gemini-style raw JSON through the API returns a real null, and a Node test runs `present()` from app.js.
+- render.yaml: `LLM_MODE: real` (every submitted attempt on the deployed site now spends quota).
