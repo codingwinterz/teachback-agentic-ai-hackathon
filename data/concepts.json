@@ -1,0 +1,23 @@
+[
+  {
+    "id": "overfitting",
+    "name": "Overfitting",
+    "subject": "ML Fundamentals",
+    "prerequisites": [],
+    "reference_notes": "- Overfitting is when a model learns the noise and random quirks of the training data instead of the underlying pattern.\n- Symptom: low training error but high error on unseen (validation/test) data, i.e. a large generalization gap.\n- Causes: model too complex/flexible for the amount of data, too many parameters, training too long, too little or unrepresentative data.\n- Detection: compare training vs validation performance; validation error rising while training error keeps falling.\n- Remedies: more (representative) data, simpler model, regularization, early stopping, cross-validation for model selection, data augmentation.\n- More data usually helps but is not guaranteed to fix it, especially if the model is extremely flexible or the new data is noisy or unrepresentative.\n- Underfitting is the opposite: model too simple, high error on both training and test data."
+  },
+  {
+    "id": "bias_variance",
+    "name": "Bias-Variance Tradeoff",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["overfitting"],
+    "reference_notes": "- Expected test error decomposes into bias^2 + variance + irreducible noise.\n- Bias: error from wrong or overly simple assumptions; the model systematically misses the true relationship (underfitting).\n- Variance: error from sensitivity to the particular training set; the model would change a lot if trained on a different sample (overfitting).\n- Increasing model complexity typically lowers bias and raises variance; decreasing it does the reverse. The best model balances the two.\n- High bias: high training error and high test error. High variance: low training error, much higher test error.\n- More training data reduces variance but does not reduce bias.\n- Irreducible noise cannot be removed by any model.\n- Bias here is NOT the same as the bias/intercept term in a linear model, and not the same as social/fairness bias."
+  },
+  {
+    "id": "regularization",
+    "name": "Regularization",
+    "subject": "ML Fundamentals",
+    "prerequisites": ["bias_variance"],
+    "reference_notes": "- Regularization adds a penalty on model complexity to the training objective to reduce overfitting (variance), usually at the cost of a little extra bias.\n- L2 (ridge / weight decay): penalizes the sum of squared weights; shrinks weights smoothly toward zero but rarely to exactly zero.\n- L1 (lasso): penalizes the sum of absolute weights; drives some weights to exactly zero, giving sparse models and implicit feature selection.\n- The strength is a hyperparameter (lambda/alpha) chosen with validation or cross-validation; too large causes underfitting, too small does little.\n- Features should be on comparable scales because the penalty depends on weight magnitude.\n- Other forms: dropout, early stopping, data augmentation act as regularizers.\n- Regularization is applied during training; it does not change the data and is not a post-training step."
+  }
+]

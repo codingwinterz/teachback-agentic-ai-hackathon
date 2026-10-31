@@ -1,0 +1,94 @@
+"""Tools the agent calls. Each call is written to agent_log."""
+
+import json
+import sqlite3
+
+from app.schemas import Concept, LearnerState, Misconception
+
+
+class AgentLogger:
+    def __init__(self, conn: sqlite3.Connection, run_id: str):
+        self.conn = conn
+        self.run_id = run_id
+
+    def log(self, step: str, tool_name: str, args: dict, result) -> None:
+        self.conn.execute(
+            "INSERT INTO agent_log (run_id, step, tool_name, args_json, result_json) VALUES (?, ?, ?, ?, ?)",
+            (self.run_id, step, tool_name, json.dumps(args, default=str),
+             json.dumps(result, default=str)),
+        )
+        self.conn.commit()
+
+    def entries(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM agent_log WHERE run_id = ? ORDER BY id", (self.run_id,)
+        ).fetchall()
+        return [
+            {**dict(r), "args": json.loads(r["args_json"]), "result": json.loads(r["result_json"])}
+            for r in rows
+        ]
+
+
+def get_concept(conn: sqlite3.Connection, log: AgentLogger, concept_id: str) -> Concept:
+    row = conn.execute("SELECT * FROM concepts WHERE id = ?", (concept_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown concept: {concept_id}")
+    concept = Concept(
+        id=row["id"], name=row["name"], subject=row["subject"],
+        reference_notes=row["reference_notes"],
+        prerequisites=json.loads(row["prerequisites_json"]),
+    )
+    log.log("context", "get_concept", {"concept_id": concept_id}, {"name": concept.name})
+    return concept
+
+
+def get_learner_state(conn: sqlite3.Connection, log: AgentLogger, concept_id: str) -> LearnerState:
+    row = conn.execute("SELECT * FROM learner_state WHERE concept_id = ?", (concept_id,)).fetchone()
+    state = LearnerState(**dict(row)) if row else LearnerState(concept_id=concept_id)
+    log.log("context", "get_learner_state", {"concept_id": concept_id}, state.model_dump())
+    return state
+
+
+def get_open_misconceptions(conn: sqlite3.Connection, concept_id: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT label FROM misconceptions WHERE concept_id = ? AND resolved = 0 ORDER BY count DESC",
+        (concept_id,),
+    ).fetchall()
+    return [r["label"] for r in rows]
+
+
+def get_dependent_concepts(conn: sqlite3.Connection, concept_id: str) -> list[str]:
+    rows = conn.execute("SELECT id, prerequisites_json FROM concepts").fetchall()
+    return [r["id"] for r in rows if concept_id in json.loads(r["prerequisites_json"])]
+
+
+def update_learner_state(
+    conn: sqlite3.Connection,
+    log: AgentLogger,
+    concept_id: str,
+    mastery: float,
+    confidence: float,
+    misconceptions: list[Misconception],
+) -> LearnerState:
+    conn.execute(
+        """UPDATE learner_state SET mastery = ?, confidence = ?, attempts_count = attempts_count + 1
+           WHERE concept_id = ?""",
+        (mastery, confidence, concept_id),
+    )
+    for m in misconceptions:
+        conn.execute(
+            """INSERT INTO misconceptions (concept_id, label) VALUES (?, ?)
+               ON CONFLICT(concept_id, label) DO UPDATE SET
+                 count = count + 1, last_seen_at = datetime('now'), resolved = 0""",
+            (concept_id, m.label),
+        )
+    conn.commit()
+    row = conn.execute("SELECT * FROM learner_state WHERE concept_id = ?", (concept_id,)).fetchone()
+    state = LearnerState(**dict(row))
+    log.log(
+        "update", "update_learner_state",
+        {"concept_id": concept_id, "mastery": mastery, "confidence": confidence,
+         "misconceptions": [m.label for m in misconceptions]},
+        state.model_dump(),
+    )
+    return state

@@ -1,0 +1,89 @@
+import json
+import sqlite3
+
+from app import config
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS concepts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    reference_notes TEXT NOT NULL,
+    prerequisites_json TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_id TEXT NOT NULL REFERENCES concepts(id),
+    raw_transcript TEXT NOT NULL,
+    clean_claims_json TEXT NOT NULL,
+    hedging_score REAL NOT NULL,
+    correct_json TEXT NOT NULL,
+    missing_json TEXT NOT NULL,
+    misconceptions_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS learner_state (
+    concept_id TEXT PRIMARY KEY REFERENCES concepts(id),
+    mastery REAL NOT NULL DEFAULT 0,
+    confidence REAL NOT NULL DEFAULT 0,
+    interval_days REAL NOT NULL DEFAULT 1,
+    ease REAL NOT NULL DEFAULT 2.5,
+    next_review_at TEXT,
+    attempts_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS misconceptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_id TEXT NOT NULL REFERENCES concepts(id),
+    label TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 1,
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (concept_id, label)
+);
+
+-- run_id groups the entries of one attempt (addition to the CLAUDE.md schema).
+CREATE TABLE IF NOT EXISTS agent_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    step TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+
+def connect(path: str | None = None) -> sqlite3.Connection:
+    conn = sqlite3.connect(path or config.DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+    conn.executescript(SCHEMA)
+    conn.commit()
+
+
+def seed_concepts(conn: sqlite3.Connection, path: str | None = None) -> int:
+    with open(path or config.CONCEPTS_PATH, encoding="utf-8") as f:
+        concepts = json.load(f)
+    for c in concepts:
+        conn.execute(
+            """INSERT INTO concepts (id, name, subject, reference_notes, prerequisites_json)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET name=excluded.name, subject=excluded.subject,
+                 reference_notes=excluded.reference_notes,
+                 prerequisites_json=excluded.prerequisites_json""",
+            (c["id"], c["name"], c["subject"], c["reference_notes"],
+             json.dumps(c["prerequisites"])),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO learner_state (concept_id) VALUES (?)", (c["id"],)
+        )
+    conn.commit()
+    return len(concepts)
