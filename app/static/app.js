@@ -8,6 +8,28 @@ const STEPS = [
   { id: "teach", label: "Teach", tools: "mini-lesson if needed" },
 ];
 const START_STEPS = [{ id: "choose", label: "Choose", tools: "agent picks a concept with tools" }];
+const EXTRA_STEPS = {
+  choose: START_STEPS[0],
+  plan: { id: "plan", label: "Plan", tools: "study plan for next time" },
+};
+
+// Turn an API/stream error into a plain message, and whether retrying makes sense.
+function friendlyError(status, detail = "") {
+  const d = String(detail).toLowerCase();
+  if (status === 0) return { message: "Can't reach the server. Check your connection, then retry.", retry: true };
+  if (status === 404) return { message: "That item no longer exists (the data may have been reset). Reload the page.", retry: false };
+  if (status === 409) return { message: "This session has already ended. Start a new one.", retry: false };
+  if (status === 502) {
+    if (/all models failed|429|quota|exhausted|resource/.test(d)) {
+      return { message: "The free AI models are out of requests right now. Wait a minute and retry, or try later.", retry: true };
+    }
+    if (/timeout|deadline|504|slow/.test(d)) {
+      return { message: "The AI is responding slowly right now. Retry in a moment.", retry: true };
+    }
+    return { message: "The AI service had a problem with this request. Retry in a moment.", retry: true };
+  }
+  return { message: "Something went wrong on the server. Retry, and if it keeps happening, reload the page.", retry: true };
+}
 
 const ACTIONS = {
   re_explain: "Explain it again",
@@ -325,7 +347,7 @@ function resetTrace(steps = STEPS) {
 }
 
 function onStepStart(step) {
-  if (!$(`step-${step}`)) $("steps").append(stepRow({ id: step, label: step, tools: "" }));
+  if (!$(`step-${step}`)) $("steps").append(stepRow(EXTRA_STEPS[step] ?? { id: step, label: step, tools: "" }));
   $(`step-${step}`).classList.add("running");
 }
 
@@ -369,13 +391,28 @@ function onTool({ step, tool_name, args, result, elapsed_s, model }) {
   $("tool-calls").hidden = false;
 }
 
-function showError(message) {
+let lastAction = null; // what Retry re-runs
+
+function showError(message, retry = null) {
   for (const row of document.querySelectorAll(".step.running")) {
     row.classList.replace("running", "failed");
     row.querySelector(".step-meta").textContent = "failed";
   }
-  $("trace-error").textContent = message;
+  $("trace-error-text").textContent = message;
+  $("retry").hidden = !retry;
+  $("retry").onclick = retry ? () => { $("trace-error").hidden = true; retry(); } : null;
   $("trace-error").hidden = false;
+}
+
+function showFriendlyError(status, detail) {
+  const f = friendlyError(status, detail);
+  showError(f.message, f.retry ? lastAction : null);
+}
+
+// Show "still working" if a request takes longer than 8s; returns a function that clears it.
+function slowNotice() {
+  const timer = setTimeout(() => { $("trace-slow").hidden = false; }, 8000);
+  return () => { clearTimeout(timer); $("trace-slow").hidden = true; };
 }
 
 // ---------- result panel ----------
@@ -516,7 +553,7 @@ async function streamPost(url, body) {
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!resp.ok) throw new Error(`The server returned ${resp.status}. Check the uvicorn log.`);
+  if (!resp.ok) throw Object.assign(new Error(`The server returned ${resp.status}.`), { status: resp.status });
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -542,11 +579,13 @@ async function submitAttempt(event) {
     return;
   }
   busy = true;
+  lastAction = () => submitAttempt();
   const button = $("submit");
   button.disabled = true;
   button.textContent = "Checking…";
   resetTrace();
   $("lesson").hidden = true;
+  const clearSlow = slowNotice();
 
   try {
     if (activeSession) {
@@ -555,8 +594,9 @@ async function submitAttempt(event) {
       await streamPost("/attempt/stream", { concept_id: $("concept").value, transcript });
     }
   } catch (err) {
-    showError(`Couldn't reach the tutor: ${err.message}`);
+    showFriendlyError(err.status ?? 0, err.message);
   } finally {
+    clearSlow();
     busy = false;
     button.disabled = false;
     button.textContent = activeSession ? "Send answer" : "Check my explanation";
@@ -566,15 +606,18 @@ async function submitAttempt(event) {
 async function startSession() {
   if (busy) return;
   busy = true;
+  lastAction = () => startSession();
   $("start-session").disabled = true;
   $("session-message").hidden = true;
   $("plan").hidden = true;
   resetTrace(START_STEPS);
+  const clearSlow = slowNotice();
   try {
     await streamPost("/session/start");
   } catch (err) {
-    showError(`Couldn't start a session: ${err.message}`);
+    showFriendlyError(err.status ?? 0, err.message);
   } finally {
+    clearSlow();
     busy = false;
     $("start-session").disabled = false;
   }
@@ -583,12 +626,18 @@ async function startSession() {
 async function endSession() {
   if (!activeSession || busy) return;
   busy = true;
+  lastAction = () => endSession();
+  $("end-session").disabled = true;
   try {
     const resp = await fetch(`/session/${activeSession.id}/end`, { method: "POST" });
-    renderSession(await resp.json());
+    const data = await resp.json();
+    if (!resp.ok) throw Object.assign(new Error(data.detail ?? ""), { status: resp.status });
+    renderSession(data);
+    await refreshState();
   } catch (err) {
-    showError(`Couldn't end the session: ${err.message}`);
+    showFriendlyError(err.status ?? 0, err.message);
   } finally {
+    $("end-session").disabled = false;
     busy = false;
   }
 }
@@ -681,7 +730,7 @@ async function handleEvent(e) {
   else if (e.type === "step_done") onStepDone(e);
   else if (e.type === "step_skipped") onStepSkipped(e.step);
   else if (e.type === "tool") onTool(e);
-  else if (e.type === "error") showError(`${e.detail} (status ${e.status})`);
+  else if (e.type === "error") showFriendlyError(e.status, e.detail);
   else if (e.type === "result") {
     lastUpdated = e.data.concept_id;
     await refreshState();
@@ -737,7 +786,7 @@ async function boot() {
     selectConcept("overfitting", { focus: false });
     await refreshState();
   } catch (err) {
-    showError(`Couldn't load the app data: ${err.message}. Is uvicorn running?`);
+    showError("Couldn't load the app data. Check that the server is running, then retry.", () => location.reload());
   }
   $("transcript").focus();
 }

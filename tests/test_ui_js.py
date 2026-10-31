@@ -67,6 +67,26 @@ def test_short_date():
     assert _run(["shortDate"], '["2026-10-29 23:59:00", "2026-11-01 00:00:00"].map(shortDate)') == ["Oct 29", "Nov 1"]
 
 
+def test_friendly_error_messages():
+    cases = [
+        [502, "Gemini API error: All models failed (a, b). Last: 429 quota"],
+        [502, "Gemini API error 504 on m: Deadline expired"],
+        [502, "Anthropic API error: overloaded"],
+        [404, "Unknown concept: x"],
+        [409, "Session 3 is finished"],
+        [500, "TypeError: boom"],
+        [0, "Failed to fetch"],
+    ]
+    out = _run(["friendlyError"], f"{json.dumps(cases)}.map(([s, d]) => friendlyError(s, d))")
+    assert "out of requests" in out[0]["message"] and out[0]["retry"]
+    assert "slowly" in out[1]["message"] and out[1]["retry"]
+    assert "problem" in out[2]["message"] and out[2]["retry"]
+    assert out[3]["retry"] is False and "Reload" in out[3]["message"]
+    assert out[4]["retry"] is False and "Start a new one" in out[4]["message"]
+    assert out[5]["retry"] and out[6]["retry"] and "connection" in out[6]["message"]
+    assert all("Error" not in o["message"] and "429" not in o["message"] for o in out)  # no raw errors
+
+
 def test_tool_label_formats_args():
     assert _run(["toolLabel"], 'toolLabel("tool.pick_next_concept", {strategy: "due"})') == \
         "pick_next_concept(strategy=due)"

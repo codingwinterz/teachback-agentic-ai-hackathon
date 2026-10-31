@@ -11,7 +11,10 @@
 </head>
 <body>
   <header class="top">
-    <h1 class="brand">TeachBack</h1>
+    <div class="title">
+      <h1 class="brand">TeachBack</h1>
+      <p class="intro">Pick a concept or start a session, then explain it out loud. Dictating with Wispr Flow works in the box.</p>
+    </div>
     <label class="picker">
       <span>Concept</span>
       <select id="concept"></select>
@@ -61,7 +64,11 @@
           <summary>Agent tool calls (<span id="tool-count">0</span>)</summary>
           <ol id="tool-list"></ol>
         </details>
-        <p id="trace-error" class="error" role="alert" hidden></p>
+        <p id="trace-slow" class="muted small" role="status" hidden>Still working: the free model can be slow. Your answer is safe.</p>
+        <div id="trace-error" class="error-box" role="alert" hidden>
+          <p id="trace-error-text"></p>
+          <button id="retry" type="button" class="quiet" hidden>Retry</button>
+        </div>
       </section>
 
       <section id="plan" class="plan" aria-labelledby="plan-title" hidden>
