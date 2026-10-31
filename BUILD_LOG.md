@@ -93,3 +93,12 @@ Honest record of what I decided vs what the AI (Claude Code) generated.
 - `FAKE_LLM_DELAY_S` (0.6s per fake call, server only) so the trace visibly steps through in dev mode.
 - Design: ruled-notebook dictation sheet (Literata) as the hero, Atkinson Hyperlegible for UI, highlighter yellow for misconceptions, sage for correct.
 - Found in browser testing: a repeated Ctrl+Enter started a second attempt (3 recorded for 2 submits); in real mode that spends quota twice. Added a busy guard + ignore key repeat; verified 3 rapid submits -> 1 attempt.
+
+## Deploy config (Render) + phone layout
+**I decided:** Render; Gemini key and model chain from environment variables; check phone width; no real calls.
+
+**AI generated (I approved):**
+- `python -m app` start command (HOST/PORT from env, 127.0.0.1:8000 locally), `render.yaml` Blueprint with healthCheckPath /health, `GEMINI_API_KEY` as a dashboard secret (`sync: false`), `.python-version` 3.14 (Render's current default; 3.15 not listed).
+- Fresh deploy starts with `LLM_MODE=fake` so it spends no quota until switched to real.
+- Phone check at 390px (iframe, since the window couldn't resize): no horizontal overflow; fixed header wrapping onto 3 rows, hid the Ctrl+Enter hint, un-stuck the sidebar on narrow screens.
+- Known limit: Render free disk is ephemeral, so SQLite progress resets on each deploy/restart.

@@ -73,6 +73,15 @@ select {
 }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
+  .learner { position: static; }
+}
+@media (max-width: 600px) {
+  /* brand + badge on one row, full-width picker below */
+  .top { display: grid; grid-template-columns: 1fr auto; gap: 0.6rem 1rem; }
+  .picker { grid-column: 1 / -1; grid-row: 2; margin-left: 0; }
+  .picker select { flex: 1; max-width: none; }
+  .kbd-hint { display: none; }
+  #submit { margin-left: auto; }
 }
 
 /* ---------- dictation sheet (the hero) ---------- */

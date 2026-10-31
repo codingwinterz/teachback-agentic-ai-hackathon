@@ -1,0 +1,30 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: teachback
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app
+    healthCheckPath: /health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      # "fake" so a fresh deploy spends no quota. Switch to "real" in the dashboard for the demo.
+      - key: LLM_MODE
+        value: fake
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-3.5-flash-lite
+      - key: LLM_FALLBACK_MODELS
+        value: gemini-3.1-flash-lite,gemini-3.6-flash,gemini-3.8-flash
+      - key: LLM_CALL_TIMEOUT_S
+        value: "12"
+      # Secret: Render asks for it when the Blueprint is first created. Never commit it.
+      - key: GEMINI_API_KEY
+        sync: false
+      # Free web services have an ephemeral disk: the SQLite file resets on every deploy/restart.
+      - key: DB_PATH
+        value: teachback.db
